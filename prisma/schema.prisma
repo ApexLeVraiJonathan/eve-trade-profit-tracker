@@ -1,0 +1,136 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Reference data from Adam4EVE IDs
+
+// Item types (typeID;typeName;published)
+model ItemType {
+  id          Int     @id @map("type_id")
+  name        String  @map("type_name")
+  published   Boolean @default(false)
+  
+  // Relations
+  marketTrades MarketOrderTrade[]
+  
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  
+  @@map("item_types")
+}
+
+// Regions (regionID;regionName)
+model Region {
+  id          Int           @id @map("region_id")
+  name        String        @map("region_name")
+  
+  // Relations
+  solarSystems SolarSystem[]
+  marketTrades MarketOrderTrade[]
+  
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  
+  @@map("regions")
+}
+
+// Solar systems (solarSystemID;solarSystemName;regionID)
+model SolarSystem {
+  id          Int       @id @map("solar_system_id")
+  name        String    @map("solar_system_name")
+  regionId    Int       @map("region_id")
+  
+  // Relations
+  region      Region    @relation(fields: [regionId], references: [id])
+  stations    Station[]
+  
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  
+  @@map("solar_systems")
+}
+
+// NPC Stations (stationID;solarSystemID;stationName)
+model Station {
+  id              BigInt      @id @map("station_id")
+  solarSystemId   Int         @map("solar_system_id")
+  name            String      @map("station_name")
+  
+  // Relations
+  solarSystem     SolarSystem @relation(fields: [solarSystemId], references: [id])
+  marketTrades    MarketOrderTrade[] @relation("StationMarketTrades")
+  trackedStations TrackedStation[] @relation("StationTracked")
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  @@map("stations")
+}
+
+// Tracked stations - stations we want to monitor for market data
+model TrackedStation {
+  id              Int         @id @default(autoincrement())
+  stationId       BigInt      @unique @map("station_id")
+  name            String      @map("station_name")
+  isActive        Boolean     @default(true) @map("is_active")
+  addedDate       DateTime    @default(now()) @map("added_date")
+  notes           String?     // Optional notes about why we track this station
+  
+  // Relations
+  station         Station?    @relation("StationTracked", fields: [stationId], references: [id])
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  @@map("tracked_stations")
+}
+
+// Market order trade data from Adam4EVE (only for tracked stations)
+model MarketOrderTrade {
+  id            Int         @id @default(autoincrement())
+  locationId    BigInt      @map("location_id")
+  regionId      Int         @map("region_id")
+  typeId        Int         @map("type_id")
+  isBuyOrder    Boolean     @map("is_buy_order")
+  hasGone       Boolean     @map("has_gone")
+  scanDate      DateTime    @map("scan_date")
+  amount        BigInt
+  high          Decimal     @db.Decimal(15, 2)
+  low           Decimal     @db.Decimal(15, 2)
+  avg           Decimal     @db.Decimal(15, 2)
+  orderNum      Int         @map("order_num")
+  iskValue      BigInt      @map("isk_value")
+  
+  // Relations
+  region          Region          @relation(fields: [regionId], references: [id])
+  itemType        ItemType        @relation(fields: [typeId], references: [id])
+  station         Station?        @relation("StationMarketTrades", fields: [locationId], references: [id])
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // Indexes for efficient querying
+  @@index([scanDate, locationId, typeId]) // Most important: date + location + item
+  @@index([locationId, typeId, scanDate]) // For profit analysis
+  @@index([regionId, scanDate])           // Regional analysis
+  @@index([typeId, scanDate])             // Item price history
+  @@index([isBuyOrder, scanDate])         // Buy vs sell analysis
+  
+  // Prevent duplicate imports for same location/type/date/order_type
+  @@unique([locationId, typeId, scanDate, isBuyOrder])
+  
+  @@map("market_order_trades")
+}
+
