@@ -120,7 +120,7 @@ export class DailyDataFetcherService {
       }
 
       // 5. Cleanup temp files
-      await this.cleanupTempFiles();
+      this.cleanupTempFiles();
 
       const endTime = new Date();
       result.data.fetchDuration = `${endTime.getTime() - startTime.getTime()}ms`;
@@ -148,7 +148,7 @@ export class DailyDataFetcherService {
       );
 
       // Cleanup on error
-      await this.cleanupTempFiles();
+      this.cleanupTempFiles();
       return result;
     }
   }
@@ -280,7 +280,7 @@ export class DailyDataFetcherService {
     }
   }
 
-  private async cleanupTempFiles(): Promise<void> {
+  private cleanupTempFiles(): void {
     try {
       if (fs.existsSync(this.TEMP_DIR)) {
         const files = fs.readdirSync(this.TEMP_DIR);

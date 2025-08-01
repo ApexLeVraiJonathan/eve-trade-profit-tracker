@@ -1,13 +1,4 @@
-import {
-  Controller,
-  Get,
-  Post,
-  Query,
-  Body,
-  UploadedFile,
-  UseInterceptors,
-} from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
+import { Controller, Get, Post, Query, Body } from '@nestjs/common';
 import { MarketDataService } from './market-data.service';
 import {
   MarketDataImportResultDto,

@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { DailyDataFetcherService } from './daily-data-fetcher.service';
 import { getErrorMessage } from '../common/interfaces/error.interface';
 
@@ -73,11 +73,11 @@ export class DailyDataSchedulerService {
   }
 
   // Manual trigger for testing or one-off runs
-  async triggerManualFetch(): Promise<{
+  triggerManualFetch(): {
     success: boolean;
     message: string;
     triggered: boolean;
-  }> {
+  } {
     if (this.isProcessing) {
       return {
         success: false,
@@ -89,7 +89,7 @@ export class DailyDataSchedulerService {
     this.logger.log('🔧 Manual daily fetch triggered');
 
     // Run the same logic as the scheduled task
-    this.handleDailyDataFetch();
+    void this.handleDailyDataFetch();
 
     return {
       success: true,

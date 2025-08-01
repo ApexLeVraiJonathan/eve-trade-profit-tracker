@@ -21,9 +21,11 @@ model ItemType {
   id          Int     @id @map("type_id")
   name        String  @map("type_name")
   published   Boolean @default(false)
+  volume      Float?  @map("volume") // Volume in m³ for transport calculations
   
   // Relations
   marketTrades MarketOrderTrade[]
+  marketPrices MarketPrice[]
   
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -39,6 +41,7 @@ model Region {
   // Relations
   solarSystems SolarSystem[]
   marketTrades MarketOrderTrade[]
+  marketPrices MarketPrice[]
   
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -72,6 +75,7 @@ model Station {
   solarSystem     SolarSystem @relation(fields: [solarSystemId], references: [id])
   marketTrades    MarketOrderTrade[] @relation("StationMarketTrades")
   trackedStations TrackedStation[] @relation("StationTracked")
+  marketPrices    MarketPrice[] @relation("StationPrices")
   
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
@@ -132,5 +136,39 @@ model MarketOrderTrade {
   @@unique([locationId, typeId, scanDate, isBuyOrder])
   
   @@map("market_order_trades")
+}
+
+// Real-time market prices from ESI (current buy/sell orders)
+model MarketPrice {
+  id              Int       @id @default(autoincrement())
+  itemTypeId      Int       @map("item_type_id")
+  regionId        Int       @map("region_id")
+  locationId      BigInt    @map("location_id")
+  orderType       String    @map("order_type") // 'buy' or 'sell'
+  price           Decimal   @db.Decimal(15, 2)
+  volume          Int       // Volume available at this price
+  minVolume       Int?      @map("min_volume")
+  duration        Int       // Order duration in days
+  issued          DateTime  // When the order was issued
+  orderRange      String    @map("order_range") // Order range (station, system, etc.)
+  
+  // Relations
+  itemType        ItemType  @relation(fields: [itemTypeId], references: [id])
+  region          Region    @relation(fields: [regionId], references: [id])
+  station         Station?  @relation("StationPrices", fields: [locationId], references: [id])
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  // Indexes for efficient arbitrage queries
+  @@index([itemTypeId, regionId, orderType]) // Core arbitrage query
+  @@index([locationId, itemTypeId])          // Station-specific prices
+  @@index([price, orderType])                // Price sorting
+  @@index([issued])                          // Order age
+  
+  // Prevent duplicate orders (same item, location, price, type)
+  @@unique([itemTypeId, locationId, orderType, price, volume, issued])
+  
+  @@map("market_prices")
 }
 

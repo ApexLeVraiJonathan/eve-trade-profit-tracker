@@ -1,8 +1,5 @@
 import { Controller, Post, Get } from '@nestjs/common';
-import {
-  DailyDataFetcherService,
-  DailyFetchResult,
-} from './daily-data-fetcher.service';
+import { DailyDataFetcherService } from './daily-data-fetcher.service';
 import { ErrorResponseDto } from '../reference-data/dto/reference-data.dto';
 import { getErrorMessage } from '../common/interfaces/error.interface';
 
@@ -130,7 +127,7 @@ export class DailyDataFetcherController {
           nextExpectedFile,
         },
       };
-    } catch (error) {
+    } catch {
       return {
         success: false,
         data: {

@@ -35,7 +35,7 @@ export class DailyDataSchedulerController {
   ) {}
 
   @Get('status')
-  async getSchedulerStatus(): Promise<SchedulerStatusDto | ErrorResponseDto> {
+  getSchedulerStatus(): SchedulerStatusDto | ErrorResponseDto {
     try {
       const status = this.dailyDataSchedulerService.getSchedulerStatus();
 
@@ -52,9 +52,9 @@ export class DailyDataSchedulerController {
   }
 
   @Post('trigger')
-  async triggerManualFetch(): Promise<ManualTriggerDto | ErrorResponseDto> {
+  triggerManualFetch(): ManualTriggerDto | ErrorResponseDto {
     try {
-      const result = await this.dailyDataSchedulerService.triggerManualFetch();
+      const result = this.dailyDataSchedulerService.triggerManualFetch();
       return result;
     } catch (error) {
       return {
@@ -65,7 +65,7 @@ export class DailyDataSchedulerController {
   }
 
   @Put('enable')
-  async enableScheduling(): Promise<SchedulerConfigDto | ErrorResponseDto> {
+  enableScheduling(): SchedulerConfigDto | ErrorResponseDto {
     try {
       const result = this.dailyDataSchedulerService.setSchedulingEnabled(true);
       return result;
@@ -78,7 +78,7 @@ export class DailyDataSchedulerController {
   }
 
   @Put('disable')
-  async disableScheduling(): Promise<SchedulerConfigDto | ErrorResponseDto> {
+  disableScheduling(): SchedulerConfigDto | ErrorResponseDto {
     try {
       const result = this.dailyDataSchedulerService.setSchedulingEnabled(false);
       return result;

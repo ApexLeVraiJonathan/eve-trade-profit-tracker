@@ -1,8 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TrackedStationService } from './tracked-station.service';
+import { Decimal } from '@prisma/client/runtime/library';
 import * as fs from 'fs';
-import * as path from 'path';
+
 import { parse } from 'csv-parse/sync';
 import {
   MarketDataCsvRow,
@@ -10,10 +11,7 @@ import {
   MarketDataImportStats,
   MarketDataFilters,
 } from './interfaces/market-data.interface';
-import {
-  MarketOrderTradeDto,
-  MarketDataQueryResultDto,
-} from './dto/market-data.dto';
+import { MarketOrderTradeDto } from './dto/market-data.dto';
 import { getErrorMessage } from '../common/interfaces/error.interface';
 
 @Injectable()
@@ -193,7 +191,12 @@ export class MarketDataService {
   async queryMarketData(
     filters: MarketDataFilters,
   ): Promise<MarketOrderTradeDto[]> {
-    const where: any = {};
+    const where: {
+      locationId?: { in: bigint[] };
+      typeId?: { in: number[] };
+      scanDate?: { gte?: Date; lte?: Date };
+      isBuyOrder?: boolean;
+    } = {};
 
     if (filters.stationIds && filters.stationIds.length > 0) {
       where.locationId = { in: filters.stationIds };
@@ -297,7 +300,24 @@ export class MarketDataService {
     };
   }
 
-  private toDto(trade: any): MarketOrderTradeDto {
+  private toDto(trade: {
+    id: number;
+    locationId: bigint;
+    regionId: number;
+    typeId: number;
+    isBuyOrder: boolean;
+    hasGone: boolean;
+    scanDate: Date;
+    amount: bigint;
+    high: Decimal;
+    low: Decimal;
+    avg: Decimal;
+    orderNum: number;
+    iskValue: bigint;
+    region?: { name: string } | null;
+    itemType?: { name: string } | null;
+    station?: { name: string } | null;
+  }): MarketOrderTradeDto {
     return {
       id: trade.id,
       locationId: trade.locationId.toString(),

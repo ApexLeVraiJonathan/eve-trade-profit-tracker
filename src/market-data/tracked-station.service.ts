@@ -10,7 +10,7 @@ import {
   UpdateTrackedStationDto,
   TrackedStationDto,
 } from './dto/tracked-station.dto';
-import { TrackedStationInfo } from './interfaces/market-data.interface';
+
 import { getErrorMessage } from '../common/interfaces/error.interface';
 
 @Injectable()
@@ -233,14 +233,21 @@ export class TrackedStationService {
     this.logger.log('Default tracked stations initialization completed');
   }
 
-  private toDto(trackedStation: any): TrackedStationDto {
+  private toDto(trackedStation: {
+    id: number;
+    stationId: bigint;
+    name: string;
+    isActive: boolean;
+    addedDate: Date;
+    notes: string | null;
+  }): TrackedStationDto {
     return {
       id: trackedStation.id,
       stationId: trackedStation.stationId.toString(),
       name: trackedStation.name,
       isActive: trackedStation.isActive,
       addedDate: trackedStation.addedDate.toISOString(),
-      notes: trackedStation.notes,
+      notes: trackedStation.notes ?? undefined,
     };
   }
 }
