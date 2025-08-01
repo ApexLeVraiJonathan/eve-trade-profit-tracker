@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Query, Body } from '@nestjs/common';
 import { MarketDataService } from './market-data.service';
+import { LiquidityAnalyzerService } from './liquidity-analyzer.service';
 import {
   MarketDataImportResultDto,
   MarketDataStatsDto,
@@ -13,7 +14,10 @@ import * as fs from 'fs';
 
 @Controller('market-data')
 export class MarketDataController {
-  constructor(private readonly marketDataService: MarketDataService) {}
+  constructor(
+    private readonly marketDataService: MarketDataService,
+    private readonly liquidityAnalyzer: LiquidityAnalyzerService,
+  ) {}
 
   @Post('import')
   async importMarketDataFromFile(
@@ -169,6 +173,96 @@ export class MarketDataController {
       return {
         success: false,
         message: `Failed to get latest market data: ${getErrorMessage(error)}`,
+      };
+    }
+  }
+
+  @Get('liquidity/report')
+  async getLiquidityReport(
+    @Query('limit') limit?: number,
+  ): Promise<{ success: boolean; data?: any; message?: string }> {
+    try {
+      const report = await this.liquidityAnalyzer.getLiquidityReport(
+        limit ? parseInt(limit.toString()) : 50,
+      );
+
+      return {
+        success: true,
+        data: report,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to generate liquidity report: ${getErrorMessage(error)}`,
+      };
+    }
+  }
+
+  @Get('liquidity/high-frequency-items')
+  async getHighFrequencyItems(
+    @Query('minHubCount') minHubCount?: number,
+    @Query('minTotalTrades') minTotalTrades?: number,
+    @Query('minValue') minValue?: number,
+    @Query('maxDaysStale') maxDaysStale?: number,
+    @Query('minLiquidityScore') minLiquidityScore?: number,
+  ): Promise<{ success: boolean; data?: any; message?: string }> {
+    try {
+      const criteria = {
+        minHubCount: minHubCount ? parseInt(minHubCount.toString()) : undefined,
+        minTotalTrades: minTotalTrades
+          ? parseInt(minTotalTrades.toString())
+          : undefined,
+        minValue: minValue ? parseInt(minValue.toString()) : undefined,
+        maxDaysStale: maxDaysStale
+          ? parseInt(maxDaysStale.toString())
+          : undefined,
+        minLiquidityScore: minLiquidityScore
+          ? parseInt(minLiquidityScore.toString())
+          : undefined,
+      };
+
+      const highLiquidityItems =
+        await this.liquidityAnalyzer.getHighLiquidityItems(criteria);
+
+      return {
+        success: true,
+        data: {
+          itemTypeIds: highLiquidityItems,
+          count: highLiquidityItems.length,
+          criteria,
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to get high-frequency items: ${getErrorMessage(error)}`,
+      };
+    }
+  }
+
+  @Get('liquidity/top-items-ids')
+  async getTopItemIds(
+    @Query('limit') limit?: number,
+  ): Promise<{ success: boolean; data?: any; message?: string }> {
+    try {
+      const report = await this.liquidityAnalyzer.getLiquidityReport(
+        limit ? parseInt(limit.toString()) : 50,
+      );
+
+      const topItemIds = report.topItems.map((item) => item.itemTypeId);
+
+      return {
+        success: true,
+        data: {
+          itemTypeIds: topItemIds,
+          count: topItemIds.length,
+          summary: report.summary,
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to get top item IDs: ${getErrorMessage(error)}`,
       };
     }
   }

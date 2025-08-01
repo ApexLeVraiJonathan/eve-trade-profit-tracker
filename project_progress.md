@@ -158,6 +158,13 @@ ItemType (1) -> (N) MarketOrderTrade (N) -> (1) Region
   - [ ] Multiple cargo ship optimizations (not just freighter)
   - [ ] Regional import/export fees
 
+- [ ] **Historical Buy Order Strategy** 🔧 ENHANCEMENT
+  - [ ] Analyze historical market data to identify commonly traded items
+  - [ ] Calculate optimal buy order prices based on historical sell patterns
+  - [ ] Implement buy order placement recommendations for Jita
+  - [ ] Track success rates of historical buy order strategies
+  - [ ] Smart buy order timing based on market cycles and volume patterns
+
 - [ ] **ESI Performance Optimization** 🔧 ENHANCEMENT
   - [ ] Register ESI application with CCP for authenticated access
   - [ ] Implement OAuth2 flow for ESI authentication

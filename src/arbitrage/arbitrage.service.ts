@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EsiService } from '../esi/esi.service';
+import { LiquidityAnalyzerService } from '../market-data/liquidity-analyzer.service';
 import {
   ArbitrageOpportunity,
   TaxCalculation,
@@ -31,6 +32,7 @@ export class ArbitrageService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly esiService: EsiService,
+    private readonly liquidityAnalyzer: LiquidityAnalyzerService,
   ) {}
 
   /**
@@ -41,14 +43,38 @@ export class ArbitrageService {
   ): Promise<ArbitrageOpportunity[]> {
     this.logger.log('Starting arbitrage opportunity analysis...');
 
+    // SIMPLIFIED: Only filter items that have sold recently (fast turnover)
+    const simpleFilters = {
+      maxDaysStale: 7, // Must have sold within last 7 days (fast turnover)
+      // NO minHubCount - irrelevant for arbitrage
+      // NO minTotalTrades - use recent frequency instead
+      // NO minValue - redundant with ISK/m³ sorting
+      // NO minLiquidityScore - use for sorting, not filtering
+    };
+
+    const liquidItemIds = await this.liquidityAnalyzer.getRecentlyTradedItems(
+      simpleFilters.maxDaysStale,
+    );
+
+    this.logger.log(
+      `Using simplified filtering: found ${liquidItemIds.length} items traded within ${simpleFilters.maxDaysStale} days`,
+    );
+
     // Get fresh market prices from ESI
     const rawMarketPrices =
       await this.esiService.fetchMarketPricesForTrackedStations();
 
-    // Convert ESI data to our internal format
-    const marketPrices: MarketPrice[] = rawMarketPrices.map(
+    // Convert ESI data to our internal format and filter to recently traded items
+    const allMarketPrices: MarketPrice[] = rawMarketPrices.map(
       convertEsiToMarketPrice,
     );
+
+    const marketPrices =
+      liquidItemIds.length > 0
+        ? allMarketPrices.filter((price) =>
+            liquidItemIds.includes(price.itemTypeId),
+          )
+        : allMarketPrices; // Fallback to all items if no recent items found
 
     if (marketPrices.length === 0) {
       this.logger.warn('No valid market prices available for analysis');
@@ -56,15 +82,23 @@ export class ArbitrageService {
     }
 
     this.logger.log(
-      `Analyzing ${marketPrices.length} market prices for arbitrage opportunities`,
+      `Filtering ${allMarketPrices.length} → ${marketPrices.length} market prices (only recently traded items)`,
     );
 
     // Group prices by item type for comparison
     const pricesByItem = this.groupPricesByItem(marketPrices);
 
+    this.logger.debug(
+      `Grouped market prices into ${pricesByItem.size} unique items`,
+    );
+
     const opportunities: ArbitrageOpportunity[] = [];
 
     for (const [itemTypeId, prices] of pricesByItem) {
+      this.logger.debug(
+        `Analyzing item ${itemTypeId}: ${prices.length} price points across hubs`,
+      );
+
       // Find the best buy and sell opportunities for this item
       const itemOpportunities = await this.analyzeItemArbitrage(
         parseInt(itemTypeId),
@@ -72,11 +106,22 @@ export class ArbitrageService {
         filters,
       );
 
+      this.logger.debug(
+        `Item ${itemTypeId} produced ${itemOpportunities.length} opportunities`,
+      );
       opportunities.push(...itemOpportunities);
     }
 
     // Filter and sort opportunities
+    this.logger.debug(
+      `Generated ${opportunities.length} raw opportunities before filtering`,
+    );
+
     const filteredOpportunities = this.applyFilters(opportunities, filters);
+    this.logger.debug(
+      `${opportunities.length} → ${filteredOpportunities.length} opportunities after filtering`,
+    );
+
     const sortedOpportunities = this.sortOpportunities(
       filteredOpportunities,
       filters,
@@ -223,7 +268,8 @@ export class ArbitrageService {
   }
 
   /**
-   * Analyze arbitrage opportunities for a specific item
+   * Analyze cross-region arbitrage opportunities for a specific item
+   * EVE Trading Reality: Buy from low-price region, transport and sell in high-price region
    */
   private async analyzeItemArbitrage(
     itemTypeId: number,
@@ -239,27 +285,43 @@ export class ArbitrageService {
     });
 
     if (!itemType || !itemType.volume) {
+      this.logger.debug(`Skipping item ${itemTypeId}: No item info or volume`);
       return opportunities;
     }
 
-    // Separate buy and sell orders
+    // Only analyze sell orders for cross-region arbitrage
     const sellOrders = prices.filter((p) => p.orderType === 'sell');
-    const buyOrders = prices.filter((p) => p.orderType === 'buy');
 
-    // Find arbitrage opportunities between all combinations
-    for (const sellOrder of sellOrders) {
-      for (const buyOrder of buyOrders) {
-        // Don't trade within the same station/region
-        if (sellOrder.locationId === buyOrder.locationId) continue;
+    this.logger.debug(
+      `Item ${itemTypeId} (${itemType.name}): ${sellOrders.length} sell orders across regions`,
+    );
 
-        // Only consider profitable opportunities
-        if (buyOrder.price <= sellOrder.price) continue;
+    // Find cross-region arbitrage opportunities between all region combinations
+    let comparisons = 0;
+    let sameRegion = 0;
+    let unprofitable = 0;
 
-        const opportunity = await this.calculateArbitrageOpportunity(
-          sellOrder,
-          buyOrder,
+    for (const sourceSellOrder of sellOrders) {
+      for (const destinationSellOrder of sellOrders) {
+        comparisons++;
+
+        // Don't trade within the same region
+        if (sourceSellOrder.regionId === destinationSellOrder.regionId) {
+          sameRegion++;
+          continue;
+        }
+
+        // Only consider profitable opportunities (destination sell price > source sell price)
+        if (destinationSellOrder.price <= sourceSellOrder.price) {
+          unprofitable++;
+          continue;
+        }
+
+        const opportunity = await this.calculateCrossRegionArbitrageOpportunity(
+          sourceSellOrder,
+          destinationSellOrder,
           itemType,
-          Math.min(sellOrder.volume, buyOrder.volume), // Use available volume
+          Math.min(sourceSellOrder.volume, destinationSellOrder.volume),
         );
 
         if (opportunity && this.meetsFilterCriteria(opportunity, filters)) {
@@ -268,11 +330,133 @@ export class ArbitrageService {
       }
     }
 
+    this.logger.debug(
+      `Item ${itemTypeId} analysis: ${comparisons} comparisons, ${sameRegion} same region, ${unprofitable} unprofitable, ${opportunities.length} opportunities found`,
+    );
+
     return opportunities;
   }
 
   /**
+   * Calculate cross-region arbitrage opportunity between sell orders in different regions
+   * EVE Reality: Buy from source region, transport to destination region, place sell order
+   */
+  private async calculateCrossRegionArbitrageOpportunity(
+    sourceSellOrder: MarketPrice,
+    destinationSellOrder: MarketPrice,
+    itemType: ItemTypeInfo,
+    quantity: number,
+  ): Promise<ArbitrageOpportunity | null> {
+    try {
+      // Get station information
+      const [sourceStation, destinationStation] = await Promise.all([
+        this.getStationInfo(sourceSellOrder.locationId),
+        this.getStationInfo(destinationSellOrder.locationId),
+      ]);
+
+      if (!sourceStation || !destinationStation) {
+        return null;
+      }
+
+      // Calculate taxes and logistics
+      const taxCalc = this.calculateTaxes();
+      const logistics = this.calculateLogistics(itemType.volume ?? 1, quantity);
+
+      const sourceBuyPrice = sourceSellOrder.price; // Price to buy from source region
+      const destinationSellPrice = destinationSellOrder.price; // Competitive sell price in destination
+      const totalCost = sourceBuyPrice * quantity;
+      const grossRevenue = destinationSellPrice * quantity;
+
+      // Calculate fees (buy broker fee in source + sell broker fee + sales tax in destination)
+      const buyBrokerFee = totalCost * taxCalc.brokerFee; // Fee to buy in source
+      const sellBrokerFee = grossRevenue * taxCalc.brokerFee; // Fee to list in destination
+      const salesTax = grossRevenue * taxCalc.salesTax; // Tax when item sells in destination
+      const totalFees = buyBrokerFee + sellBrokerFee + salesTax;
+
+      const grossMargin = destinationSellPrice - sourceBuyPrice;
+      const netProfit = grossRevenue - totalCost - totalFees;
+      const profitPerM3 = netProfit / logistics.totalVolume;
+
+      // Confidence scoring based on order age and volume
+      const sourceOrderAge = this.calculateOrderAge(sourceSellOrder.issued);
+      const destinationOrderAge = this.calculateOrderAge(
+        destinationSellOrder.issued,
+      );
+      const confidence = this.calculateConfidence(
+        sourceOrderAge,
+        destinationOrderAge,
+        quantity,
+        sourceSellOrder.volume,
+        destinationSellOrder.volume,
+      );
+
+      return {
+        itemTypeId: itemType.id,
+        itemTypeName: itemType.name,
+        volume: itemType.volume ?? 0,
+
+        buyHub: {
+          stationId: sourceSellOrder.locationId.toString(),
+          stationName: sourceStation.name,
+          regionId: sourceStation.regionId,
+          regionName: sourceStation.regionName,
+          bestBuyPrice: sourceBuyPrice,
+          availableVolume: sourceSellOrder.volume,
+          totalValue: totalCost,
+        },
+
+        sellHub: {
+          stationId: destinationSellOrder.locationId.toString(),
+          stationName: destinationStation.name,
+          regionId: destinationStation.regionId,
+          regionName: destinationStation.regionName,
+          bestSellPrice: destinationSellPrice,
+          demandVolume: destinationSellOrder.volume, // Competitive volume at this price
+          totalValue: grossRevenue,
+        },
+
+        profitAnalysis: {
+          grossMargin,
+          grossMarginPercent: (grossMargin / sourceBuyPrice) * 100,
+          netProfit,
+          netProfitPercent: (netProfit / totalCost) * 100,
+          profitPerM3,
+          roi: (netProfit / totalCost) * 100,
+        },
+
+        costs: {
+          buyPrice: sourceBuyPrice,
+          sellPrice: destinationSellPrice,
+          salesTax,
+          brokerFee: buyBrokerFee + sellBrokerFee,
+          totalCost: totalCost + buyBrokerFee,
+          totalRevenue: grossRevenue - sellBrokerFee - salesTax,
+        },
+
+        logistics,
+
+        metadata: {
+          calculatedAt: new Date(),
+          buyOrderAge: sourceOrderAge,
+          sellOrderAge: destinationOrderAge,
+          spreadPercent:
+            ((destinationSellPrice - sourceBuyPrice) / sourceBuyPrice) * 100,
+          confidence,
+        },
+      };
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        `Failed to calculate cross-region arbitrage opportunity: ${errorMessage}`,
+      );
+      return null;
+    }
+  }
+
+  /**
    * Calculate detailed arbitrage opportunity
+   * LEGACY METHOD - kept for backwards compatibility but not used in cross-region logic
    */
   private async calculateArbitrageOpportunity(
     buyOrder: MarketPrice, // Where we buy (sell order)
