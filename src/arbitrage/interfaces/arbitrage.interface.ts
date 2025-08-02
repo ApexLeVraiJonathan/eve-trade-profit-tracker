@@ -13,7 +13,7 @@ export interface ArbitrageOpportunity {
   // Key metrics for trading decisions
   margin: number; // Gross margin percentage
   possibleProfit: number; // Net profit in ISK
-  tradesPerWeek: number; // Trading frequency from historical data
+  daysTraded: number; // Days per week traded from liquidity analysis
   totalAmountTradedPerWeek: number; // Total volume traded weekly
   iskPerM3: number; // Profit density (ISK per cubic meter)
 
@@ -171,7 +171,7 @@ export interface ArbitrageFilters {
   toHub?: string; // Destination hub filter (e.g., "Amarr")
 
   // Sorting and pagination
-  sortBy?: 'profit' | 'margin' | 'profitPerM3' | 'roi' | 'tradesPerWeek';
+  sortBy?: 'profit' | 'margin' | 'profitPerM3' | 'roi' | 'daysTraded';
   sortOrder?: 'asc' | 'desc';
   limit?: number;
 }

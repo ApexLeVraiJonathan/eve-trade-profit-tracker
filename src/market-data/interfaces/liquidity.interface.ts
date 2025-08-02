@@ -10,6 +10,7 @@ export interface LiquidItemData {
   typeId: number;
   daysTraded: number;
   totalValue: number;
+  totalAmountTradedPerWeek: number; // Total units traded per week
   avgValue: number;
   priceData: {
     high: number; // Highest recorded price in period

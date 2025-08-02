@@ -16,7 +16,7 @@ export interface ArbitrageOpportunityDto {
   possibleProfit: number; // Net profit in ISK
 
   // 5. Trades per week
-  tradesPerWeek: number; // Trading frequency from historical data
+  daysTraded: number; // Days per week traded from liquidity analysis
 
   // 6. Total amount traded per week
   totalAmountTradedPerWeek: number; // Total volume traded weekly
@@ -100,7 +100,7 @@ export interface ArbitrageFiltersDto {
   itemTypeIds?: number[];
   excludeHighRisk?: boolean;
   limit?: number;
-  sortBy?: 'profit' | 'margin' | 'profitPerM3' | 'roi' | 'tradesPerWeek'; // Added tradesPerWeek
+  sortBy?: 'profit' | 'margin' | 'profitPerM3' | 'roi' | 'daysTraded'; // Updated to daysTraded
   sortOrder?: 'asc' | 'desc';
 
   // Hub filtering (solar system names)

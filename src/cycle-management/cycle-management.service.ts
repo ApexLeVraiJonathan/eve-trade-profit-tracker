@@ -61,13 +61,14 @@ export class CycleManagementService {
         },
       });
 
-    // Group opportunities by destination hub
+    // Group opportunities by destination hub (case-insensitive)
     const opportunitiesByHub = new Map<string, ArbitrageOpportunity[]>();
     allOpportunities.forEach((opp) => {
-      if (!opportunitiesByHub.has(opp.toHub)) {
-        opportunitiesByHub.set(opp.toHub, []);
+      const hubKey = opp.toHub.toLowerCase(); // Normalize to lowercase
+      if (!opportunitiesByHub.has(hubKey)) {
+        opportunitiesByHub.set(hubKey, []);
       }
-      opportunitiesByHub.get(opp.toHub)!.push(opp);
+      opportunitiesByHub.get(hubKey)!.push(opp);
     });
 
     // Process each hub allocation
@@ -86,48 +87,13 @@ export class CycleManagementService {
         `Processing ${hub}: ${hubCapital.toLocaleString()} ISK (${(percentage * 100).toFixed(1)}%), ${opportunities.length} opportunities`,
       );
 
-      // Filter opportunities by liquidity and convert to cycle format
-      const cycleOpportunities: CycleOpportunity[] = opportunities
-        .slice(0, defaultFilters.maxItemsPerHub)
-        .map((opp) => {
-          const itemVolume = opp.details?.volume || 1;
-          const buyPrice = opp.details?.costs.buyPrice || 0;
-          const quantity = buyPrice > 0 ? Math.floor(hubCapital / buyPrice) : 0;
-          const totalCost = quantity * buyPrice;
-          const totalCargo = quantity * itemVolume;
-          const shipmentsNeeded = Math.ceil(totalCargo / 60000); // 60km³ per shipment
-          const totalTransportCost = shipmentsNeeded * transportCost;
-          const netProfitAfterTransport =
-            opp.possibleProfit - totalTransportCost;
-
-          return {
-            itemTypeId: opp.itemTypeId,
-            itemName: opp.itemTypeName,
-            buyPrice,
-            sellPrice: opp.details?.costs.sellPrice || 0,
-            margin: opp.margin,
-            profit: opp.possibleProfit,
-            profitPerM3: opp.iskPerM3,
-            quantity,
-            totalCost,
-            totalCargo,
-            shipmentsNeeded,
-            transportCost,
-            netProfitAfterTransport,
-            recordedPriceLow: opp.recordedPriceLow,
-            recordedPriceHigh: opp.recordedPriceHigh,
-            recordedPriceAverage: opp.recordedPriceAverage,
-            liquidity: opp.tradesPerWeek, // Using tradesPerWeek as fallback since daysTraded not available
-          };
-        })
-        .filter((opp) => {
-          // Debug logging
-          this.logger.debug(
-            `After transport: ${opp.itemName} netProfit=${opp.netProfitAfterTransport}`,
-          );
-          return opp.netProfitAfterTransport > 0;
-        }) // Only profitable after transport
-        .sort((a, b) => b.profitPerM3 - a.profitPerM3); // Sort by ISK/m³
+      // Create optimally packed shipments for this hub
+      const cycleOpportunities = this.createOptimalShipments(
+        opportunities,
+        hubCapital,
+        transportCost,
+        defaultFilters.maxItemsPerHub,
+      );
 
       // Calculate totals for this hub
       const hubValue = cycleOpportunities.reduce(
@@ -184,5 +150,184 @@ export class CycleManagementService {
         averageMargin,
       },
     };
+  }
+
+  /**
+   * Create optimally packed shipments using bin-packing algorithm
+   * Properly calculates quantities based on market liquidity and budget constraints
+   */
+  private createOptimalShipments(
+    opportunities: ArbitrageOpportunity[],
+    hubCapital: number,
+    transportCostPerShipment: number,
+    maxItems: number,
+  ): CycleOpportunity[] {
+    const CARGO_CAPACITY = 60000; // 60km³ per shipment
+    const result: CycleOpportunity[] = [];
+    let remainingBudget = hubCapital;
+
+    // Filter and sort opportunities by profit per m³ (most efficient first)
+    const viableOpportunities = opportunities
+      .filter((opp) => {
+        const buyPrice = opp.details?.costs.buyPrice || 0;
+        const volume = opp.details?.volume || 1;
+        const hasLiquidity = opp.totalAmountTradedPerWeek > 0;
+
+        return (
+          buyPrice > 0 &&
+          volume > 0 &&
+          buyPrice <= remainingBudget && // Can afford at least one
+          hasLiquidity // Has trading volume data
+        );
+      })
+      .slice(0, maxItems)
+      .sort((a, b) => b.iskPerM3 - a.iskPerM3);
+
+    this.logger.log(
+      `Starting shipment packing with ${viableOpportunities.length} viable opportunities, budget: ${remainingBudget.toLocaleString()} ISK`,
+    );
+
+    // Keep creating shipments until budget or opportunities are exhausted
+    let shipmentNumber = 1;
+    while (
+      remainingBudget > transportCostPerShipment &&
+      viableOpportunities.length > 0
+    ) {
+      const shipmentItems = this.packSingleShipment(
+        viableOpportunities,
+        remainingBudget,
+        transportCostPerShipment,
+        CARGO_CAPACITY,
+      );
+
+      if (shipmentItems.length === 0) {
+        this.logger.log(
+          `No more profitable items can fit in shipment ${shipmentNumber}, stopping`,
+        );
+        break;
+      }
+
+      // Calculate transport cost allocation for this shipment
+      const shipmentTotalCargo = shipmentItems.reduce(
+        (sum, item) => sum + item.totalCargo,
+        0,
+      );
+      const transportCostPerItem =
+        transportCostPerShipment / shipmentItems.length; // Split evenly
+
+      // Add items to result with proper transport cost allocation
+      shipmentItems.forEach((item) => {
+        const netProfitAfterTransport = item.profit - transportCostPerItem;
+
+        // Final check: only add if still profitable after precise transport cost allocation
+        if (netProfitAfterTransport > 0) {
+          result.push({
+            ...item,
+            transportCost: transportCostPerItem,
+            netProfitAfterTransport,
+          });
+          remainingBudget -= item.totalCost;
+        } else {
+          this.logger.debug(
+            `Filtering out ${item.itemName}: unprofitable after transport (${netProfitAfterTransport.toLocaleString()} ISK)`,
+          );
+        }
+      });
+
+      this.logger.log(
+        `Shipment ${shipmentNumber}: ${shipmentItems.length} items, ${shipmentTotalCargo.toFixed(2)}m³, cost: ${shipmentItems.reduce((sum, item) => sum + item.totalCost, 0).toLocaleString()} ISK`,
+      );
+
+      shipmentNumber++;
+    }
+
+    this.logger.log(
+      `Completed packing: ${result.length} items across ${shipmentNumber - 1} shipments, remaining budget: ${remainingBudget.toLocaleString()} ISK`,
+    );
+
+    return result;
+  }
+
+  /**
+   * Pack a single 60km³ shipment with multiple items using bin-packing
+   */
+  private packSingleShipment(
+    opportunities: ArbitrageOpportunity[],
+    budget: number,
+    transportCost: number,
+    cargoCapacity: number,
+  ): Omit<CycleOpportunity, 'transportCost' | 'netProfitAfterTransport'>[] {
+    const shipmentItems: Omit<
+      CycleOpportunity,
+      'transportCost' | 'netProfitAfterTransport'
+    >[] = [];
+    let remainingBudget = budget - transportCost; // Reserve transport cost
+    let remainingCargo = cargoCapacity;
+
+    // Try to pack items efficiently
+    for (const opp of opportunities) {
+      const buyPrice = opp.details?.costs.buyPrice || 0;
+      const sellPrice = opp.details?.costs.sellPrice || 0;
+      const itemVolume = opp.details?.volume || 1;
+
+      if (buyPrice <= 0 || itemVolume <= 0) continue;
+
+      // Calculate safe quantity based on half week's trading volume
+      const safeQuantity = Math.max(
+        1,
+        Math.floor(opp.totalAmountTradedPerWeek * 0.5),
+      );
+
+      // Apply constraints: budget, cargo space, and safe quantity
+      const maxAffordable = Math.floor(remainingBudget / buyPrice);
+      const maxByVolume = Math.floor(remainingCargo / itemVolume);
+      const finalQuantity = Math.min(safeQuantity, maxAffordable, maxByVolume);
+
+      if (finalQuantity <= 0) continue;
+
+      const totalCost = finalQuantity * buyPrice;
+      const totalCargo = finalQuantity * itemVolume;
+      const profit = finalQuantity * (sellPrice - buyPrice) * (1 - 0.045); // Approximate taxes
+
+      // Estimate transport cost per item (conservative estimate - assume 1 item per shipment worst case)
+      const estimatedTransportCostPerItem = transportCost; // Worst case: full transport cost for this item
+      const netProfitAfterTransport = profit - estimatedTransportCostPerItem;
+
+      // Only add if it's profitable after transport costs
+      if (
+        profit > 0 &&
+        netProfitAfterTransport > 0 && // Must be profitable after transport
+        finalQuantity > 0 && // Must have valid quantity
+        totalCargo <= remainingCargo &&
+        totalCost <= remainingBudget
+      ) {
+        shipmentItems.push({
+          itemTypeId: opp.itemTypeId,
+          itemName: opp.itemTypeName,
+          buyPrice,
+          sellPrice,
+          margin: ((sellPrice - buyPrice) / buyPrice) * 100,
+          profit,
+          profitPerM3: profit / totalCargo,
+          quantity: finalQuantity,
+          totalCost,
+          totalCargo,
+          shipmentsNeeded: 1, // This item is part of 1 shipment
+          recordedPriceLow: opp.recordedPriceLow,
+          recordedPriceHigh: opp.recordedPriceHigh,
+          recordedPriceAverage: opp.recordedPriceAverage,
+          liquidity: opp.daysTraded,
+        });
+
+        remainingBudget -= totalCost;
+        remainingCargo -= totalCargo;
+
+        this.logger.debug(
+          `Packed: ${finalQuantity}x ${opp.itemTypeName} (${totalCargo.toFixed(2)}m³, ${totalCost.toLocaleString()} ISK)`,
+        );
+      }
+    }
+
+    return shipmentItems;
   }
 }

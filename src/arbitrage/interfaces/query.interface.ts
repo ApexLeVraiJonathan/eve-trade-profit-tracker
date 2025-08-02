@@ -56,13 +56,13 @@ export function parseOptionalBoolean(value: string | undefined): boolean {
 
 export function isValidSortBy(
   value: string | undefined,
-): value is 'profit' | 'margin' | 'profitPerM3' | 'roi' | 'tradesPerWeek' {
+): value is 'profit' | 'margin' | 'profitPerM3' | 'roi' | 'daysTraded' {
   return (
     value === 'profit' ||
     value === 'margin' ||
     value === 'profitPerM3' ||
     value === 'roi' ||
-    value === 'tradesPerWeek'
+    value === 'daysTraded'
   );
 }
 

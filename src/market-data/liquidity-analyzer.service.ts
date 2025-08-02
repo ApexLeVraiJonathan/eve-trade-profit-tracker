@@ -118,6 +118,7 @@ export class LiquidityAnalyzerService {
         typeId: true,
         scanDate: true,
         iskValue: true,
+        amount: true, // Track units traded
         high: true,
         low: true,
         avg: true,
@@ -127,6 +128,7 @@ export class LiquidityAnalyzerService {
     // Group by typeId and count distinct trading days
     const itemTradingDays = new Map<string, Set<string>>();
     const itemValues = new Map<string, number[]>();
+    const itemAmounts = new Map<string, number[]>(); // Track units traded
     const itemPrices = new Map<
       string,
       { highs: number[]; lows: number[]; avgs: number[] }
@@ -148,6 +150,12 @@ export class LiquidityAnalyzerService {
       }
       itemValues.get(typeIdStr)!.push(Number(trade.iskValue));
 
+      // Track amounts (units) for weekly volume calculation
+      if (!itemAmounts.has(typeIdStr)) {
+        itemAmounts.set(typeIdStr, []);
+      }
+      itemAmounts.get(typeIdStr)!.push(Number(trade.amount));
+
       // Track price data (high, low, avg from each trade record)
       if (!itemPrices.has(typeIdStr)) {
         itemPrices.set(typeIdStr, { highs: [], lows: [], avgs: [] });
@@ -164,10 +172,12 @@ export class LiquidityAnalyzerService {
     for (const [typeIdStr, tradingDays] of itemTradingDays) {
       const daysCount = tradingDays.size;
       const values = itemValues.get(typeIdStr) || [];
+      const amounts = itemAmounts.get(typeIdStr) || [];
       const avgValue =
         values.length > 0
           ? values.reduce((a, b) => a + b, 0) / values.length
           : 0;
+      const totalUnitsTraded = amounts.reduce((a, b) => a + b, 0);
 
       const passedDays = daysCount >= minDaysPerWeek;
       const passedValue = avgValue >= filter.minValue;
@@ -194,6 +204,7 @@ export class LiquidityAnalyzerService {
           typeId: Number(typeIdStr),
           daysTraded: daysCount,
           totalValue: values.reduce((a, b) => a + b, 0),
+          totalAmountTradedPerWeek: totalUnitsTraded, // Total units traded in the 7-day window
           avgValue: avgValue,
           priceData: priceStats,
         });

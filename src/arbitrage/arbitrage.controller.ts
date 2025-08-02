@@ -1,10 +1,9 @@
-import { Controller, Get, Post, Query, Body, Logger } from '@nestjs/common';
+import { Controller, Get, Query, Logger } from '@nestjs/common';
 import { ArbitrageService } from './arbitrage.service';
 import { ArbitrageOpportunity } from './interfaces/arbitrage.interface';
 import {
   ArbitrageOpportunitiesDto,
   ArbitrageOpportunityDto,
-  ArbitrageCalculationDto,
   ArbitrageFiltersDto,
   ArbitrageSummaryDto,
   ArbitrageErrorDto,
@@ -12,7 +11,6 @@ import {
 import {
   ArbitrageQueryParams,
   ArbitrageSummaryQueryParams,
-  ArbitrageCalculationBody,
   parseOptionalFloat,
   parseOptionalInt,
   parseOptionalBoolean,
@@ -119,7 +117,7 @@ export class ArbitrageController {
           // Key metrics for trading decisions
           margin: Math.round(opp.margin * 100) / 100, // Round to 2 decimal places
           possibleProfit: Math.round(opp.possibleProfit),
-          tradesPerWeek: opp.tradesPerWeek,
+          daysTraded: opp.daysTraded,
           totalAmountTradedPerWeek: opp.totalAmountTradedPerWeek,
           iskPerM3: Math.round(opp.iskPerM3),
 
@@ -290,7 +288,7 @@ export class ArbitrageController {
         toHub: opp.toHub,
         margin: Math.round(opp.margin * 100) / 100,
         possibleProfit: Math.round(opp.possibleProfit),
-        tradesPerWeek: opp.tradesPerWeek,
+        daysTraded: opp.daysTraded,
         totalAmountTradedPerWeek: opp.totalAmountTradedPerWeek,
         iskPerM3: Math.round(opp.iskPerM3),
         buyPrice: opp.details?.costs.buyPrice ?? 0,
@@ -323,85 +321,6 @@ export class ArbitrageController {
       return {
         success: false,
         error: 'Failed to fetch route arbitrage opportunities',
-        details: errorMessage,
-        timestamp: new Date().toISOString(),
-      };
-    }
-  }
-
-  @Post('calculate')
-  async calculateArbitrage(
-    @Body() body: ArbitrageCalculationBody,
-  ): Promise<ArbitrageCalculationDto | ArbitrageErrorDto> {
-    try {
-      const { itemTypeId, buyStationId, sellStationId, quantity } = body;
-
-      this.logger.log(
-        `Calculating arbitrage for item ${itemTypeId} from ${buyStationId} to ${sellStationId}, quantity: ${quantity}`,
-      );
-
-      const opportunity =
-        await this.arbitrageService.calculateSpecificArbitrage(
-          itemTypeId,
-          buyStationId,
-          sellStationId,
-          quantity,
-        );
-
-      if (!opportunity) {
-        return {
-          success: false,
-          error: 'No arbitrage opportunity found for the specified parameters',
-          timestamp: new Date().toISOString(),
-        };
-      }
-
-      return {
-        success: true,
-        data: {
-          itemTypeId: opportunity.itemTypeId,
-          itemTypeName: opportunity.itemTypeName,
-          buyStationId: opportunity.details?.buyHub.stationId ?? '',
-          sellStationId: opportunity.details?.sellHub.stationId ?? '',
-          quantity,
-
-          calculation: {
-            buyPrice: opportunity.details?.costs.buyPrice.toString() ?? '0',
-            sellPrice: opportunity.details?.costs.sellPrice.toString() ?? '0',
-            grossProfit:
-              opportunity.details?.profitAnalysis.grossMargin.toString() ?? '0',
-            netProfit: opportunity.possibleProfit.toString(), // Use streamlined field
-            profitMargin: opportunity.margin, // Use streamlined field
-            roi: opportunity.details?.profitAnalysis.roi ?? 0,
-            profitPerM3: opportunity.iskPerM3.toString(), // Use streamlined field
-          },
-
-          costs: {
-            itemCost: (
-              (opportunity.details?.costs.buyPrice ?? 0) * quantity
-            ).toString(),
-            salesTax: opportunity.details?.costs.salesTax.toString() ?? '0',
-            brokerFees: opportunity.details?.costs.brokerFee.toString() ?? '0',
-            totalCost: opportunity.details?.costs.totalCost.toString() ?? '0',
-          },
-
-          logistics: {
-            totalVolume: opportunity.details?.logistics.totalCargo ?? 0,
-            shipmentsNeeded:
-              opportunity.details?.logistics.shipmentsNeeded ?? 0,
-            cargoEfficiency:
-              opportunity.details?.logistics.cargoEfficiency ?? 0,
-          },
-        },
-      };
-    } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to calculate arbitrage:', errorMessage);
-
-      return {
-        success: false,
-        error: 'Failed to calculate arbitrage',
         details: errorMessage,
         timestamp: new Date().toISOString(),
       };
@@ -519,41 +438,6 @@ export class ArbitrageController {
         error: 'Failed to generate arbitrage summary',
         details: errorMessage,
         timestamp: new Date().toISOString(),
-      };
-    }
-  }
-
-  @Post('refresh-prices')
-  refreshMarketPrices(): {
-    success: boolean;
-    message: string;
-    data?: any;
-  } {
-    try {
-      this.logger.log(
-        'Manually refreshing market prices for arbitrage analysis...',
-      );
-
-      // This would trigger a fresh fetch from ESI
-      // The actual price fetching is handled by the ESI service
-      // which is used automatically by the arbitrage service
-
-      return {
-        success: true,
-        message: 'Market prices will be refreshed on next arbitrage analysis',
-        data: {
-          refreshedAt: new Date().toISOString(),
-          note: 'Prices are fetched fresh from ESI for each arbitrage calculation',
-        },
-      };
-    } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error('Failed to refresh market prices:', errorMessage);
-
-      return {
-        success: false,
-        message: 'Failed to refresh market prices',
       };
     }
   }

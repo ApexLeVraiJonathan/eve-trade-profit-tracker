@@ -142,10 +142,17 @@ export class ArbitrageService {
         `Processing ${liquidItemsData.length} liquid items for route: ${sourceHub} → ${destinationHub.systemName}`,
       );
 
-      // Extract type IDs for ESI calls and create price data map
+      // Extract type IDs for ESI calls and create liquidity data map
       const liquidItemIds = liquidItemsData.map((item) => item.typeId);
-      const priceDataMap = new Map(
-        liquidItemsData.map((item) => [item.typeId, item.priceData]),
+      const liquidityDataMap = new Map(
+        liquidItemsData.map((item) => [
+          item.typeId,
+          {
+            daysTraded: item.daysTraded,
+            totalAmountTradedPerWeek: item.totalAmountTradedPerWeek,
+            priceData: item.priceData,
+          },
+        ]),
       );
 
       // Get market prices for this specific route
@@ -178,7 +185,7 @@ export class ArbitrageService {
           prices,
           filters,
           itemTypeMap,
-          priceDataMap.get(parseInt(itemTypeId)),
+          liquidityDataMap.get(parseInt(itemTypeId)),
         );
         allOpportunities.push(...itemOpportunities);
       }
@@ -213,160 +220,17 @@ export class ArbitrageService {
   }
 
   /**
-   * Legacy method: Find all current arbitrage opportunities (less efficient)
-   * @deprecated Use findMultiHubArbitrageOpportunities instead
-   */
-  async findArbitrageOpportunitiesLegacy(
-    filters?: ArbitrageFilters,
-  ): Promise<ArbitrageOpportunity[]> {
-    this.logger.log('Starting arbitrage opportunity analysis...');
-
-    // Get fresh market prices from ESI for all tracked items
-    // Let the opportunity analysis and filtering handle liquidity/profitability
-    const rawMarketPrices =
-      await this.esiService.fetchMarketPricesForTrackedStations();
-
-    // Convert ESI data to our internal format
-    const marketPrices: MarketPrice[] = rawMarketPrices.map(
-      convertEsiToMarketPrice,
-    );
-
-    if (marketPrices.length === 0) {
-      this.logger.warn('No valid market prices available for analysis');
-      return [];
-    }
-
-    this.logger.log(
-      `Processing ${marketPrices.length} market prices for arbitrage analysis`,
-    );
-
-    // Group prices by item type for comparison
-    const pricesByItem = this.groupPricesByItem(marketPrices);
-
-    this.logger.debug(
-      `Grouped market prices into ${pricesByItem.size} unique items`,
-    );
-
-    const opportunities: ArbitrageOpportunity[] = [];
-
-    // Pre-fetch all item type data to avoid N+1 database queries
-    const uniqueItemTypeIds = Array.from(pricesByItem.keys()).map((id) =>
-      parseInt(id),
-    );
-    const itemTypes = await this.prisma.itemType.findMany({
-      where: { id: { in: uniqueItemTypeIds } },
-      select: { id: true, name: true, volume: true },
-    });
-    const itemTypeMap = new Map(itemTypes.map((item) => [item.id, item]));
-
-    for (const [itemTypeId, prices] of pricesByItem) {
-      // Removed general debug logging
-
-      // Find the best buy and sell opportunities for this item
-      const itemOpportunities = await this.analyzeItemArbitrage(
-        parseInt(itemTypeId),
-        prices,
-        filters,
-        itemTypeMap,
-      );
-
-      // Removed general debug logging
-      opportunities.push(...itemOpportunities);
-    }
-
-    // Filter and sort opportunities
-    this.logger.debug(
-      `Generated ${opportunities.length} raw opportunities before filtering`,
-    );
-
-    const filteredOpportunities = this.applyFilters(opportunities, filters);
-    this.logger.debug(
-      `${opportunities.length} → ${filteredOpportunities.length} opportunities after filtering`,
-    );
-
-    const sortedOpportunities = this.sortOpportunities(
-      filteredOpportunities,
-      filters,
-    );
-
-    this.logger.log(
-      `Found ${sortedOpportunities.length} arbitrage opportunities`,
-    );
-
-    return sortedOpportunities;
-  }
-
-  /**
-   * Calculate arbitrage for a specific item between two stations
-   */
-  async calculateSpecificArbitrage(
-    itemTypeId: number,
-    buyStationId: string,
-    sellStationId: string,
-    quantity: number,
-  ): Promise<ArbitrageOpportunity | null> {
-    this.logger.log(
-      `Calculating arbitrage for item ${itemTypeId} from ${buyStationId} to ${sellStationId}`,
-    );
-
-    // Get fresh market prices
-    const rawMarketPrices =
-      await this.esiService.fetchMarketPricesForTrackedStations();
-    const marketPrices: MarketPrice[] = rawMarketPrices.map(
-      convertEsiToMarketPrice,
-    );
-
-    const itemPrices = marketPrices.filter((p) => p.itemTypeId === itemTypeId);
-
-    const buyOrders = itemPrices.filter(
-      (p) => p.orderType === 'sell' && p.locationId.toString() === buyStationId,
-    );
-
-    const sellOrders = itemPrices.filter(
-      (p) => p.orderType === 'buy' && p.locationId.toString() === sellStationId,
-    );
-
-    if (buyOrders.length === 0 || sellOrders.length === 0) {
-      this.logger.warn(`No matching orders found for item ${itemTypeId}`);
-      return null;
-    }
-
-    // Get the best prices
-    const bestBuyOrder = buyOrders.reduce((min, order) =>
-      order.price < min.price ? order : min,
-    );
-
-    const bestSellOrder = sellOrders.reduce((max, order) =>
-      order.price > max.price ? order : max,
-    );
-
-    // Get item info including volume
-    const itemType = await this.prisma.itemType.findUnique({
-      where: { id: itemTypeId },
-      select: { id: true, name: true, volume: true },
-    });
-
-    if (!itemType || !itemType.volume) {
-      this.logger.warn(`Item ${itemTypeId} not found or missing volume data`);
-      return null;
-    }
-
-    // Calculate the arbitrage opportunity
-    return this.calculateArbitrageOpportunity(
-      bestBuyOrder,
-      bestSellOrder,
-      itemType,
-      quantity,
-    );
-  }
-
-  /**
-   * Get arbitrage summary statistics
+   * Get arbitrage summary statistics using modern multi-hub analysis
    */
   async getArbitrageSummary(
     filters?: ArbitrageFilters,
   ): Promise<ArbitrageSummary> {
-    const opportunities = await this.findArbitrageOpportunitiesLegacy(filters);
+    // Use the modern multi-hub analysis with default hubs
+    const opportunities = await this.findMultiHubArbitrageOpportunities({
+      sourceHub: 'jita',
+      destinationHubs: ['amarr', 'dodixie', 'rens', 'hek'],
+      filters,
+    });
 
     const totalPotentialProfit = opportunities.reduce(
       (sum, opp) => sum + opp.possibleProfit,
@@ -386,13 +250,13 @@ export class ArbitrageService {
     >();
 
     opportunities.forEach((opp) => {
-      const hubName = opp.toHub; // Use streamlined hub name
+      const hubName = opp.toHub;
       const existing = hubStats.get(hubName) || {
         opportunities: 0,
         totalProfit: 0,
       };
       existing.opportunities++;
-      existing.totalProfit += opp.possibleProfit; // Use streamlined field
+      existing.totalProfit += opp.possibleProfit;
       hubStats.set(hubName, existing);
     });
 
@@ -439,7 +303,11 @@ export class ArbitrageService {
       number,
       { id: number; name: string; volume: number | null }
     >,
-    priceData?: { high: number; low: number; average: number },
+    liquidityData?: {
+      daysTraded: number;
+      totalAmountTradedPerWeek: number;
+      priceData: { high: number; low: number; average: number };
+    },
   ): Promise<ArbitrageOpportunity[]> {
     const opportunities: ArbitrageOpportunity[] = [];
 
@@ -585,7 +453,7 @@ export class ArbitrageService {
           competitiveDestOrder,
           itemType,
           Math.min(bestSourceOrder.volume, competitiveDestOrder.volume),
-          priceData,
+          liquidityData,
         );
 
         // DEBUG: Log opportunity calculation result for ALL items
@@ -628,7 +496,11 @@ export class ArbitrageService {
     destinationSellOrder: MarketPrice,
     itemType: ItemTypeInfo,
     quantity: number,
-    priceData?: { high: number; low: number; average: number },
+    liquidityData?: {
+      daysTraded: number;
+      totalAmountTradedPerWeek: number;
+      priceData: { high: number; low: number; average: number };
+    },
   ): Promise<ArbitrageOpportunity | null> {
     try {
       // Get station information
@@ -679,11 +551,6 @@ export class ArbitrageService {
         destinationSellOrder.volume,
       );
 
-      // Get trading metrics for this item (temporarily disable optimization to debug BigInt error)
-      // const preCalculatedMetrics = tradingMetricsMap?.get(itemType.id);
-      // const tradingMetrics = preCalculatedMetrics || (await this.getTradingMetrics(itemType.id));
-      const tradingMetrics = await this.getTradingMetrics(itemType.id);
-
       // NEW STREAMLINED FORMAT
       return {
         // Core item info
@@ -697,14 +564,14 @@ export class ArbitrageService {
         // Key metrics for trading decisions
         margin: (grossMargin / sourceBuyPrice) * 100, // Gross margin percentage
         possibleProfit: netProfit, // Net profit in ISK
-        tradesPerWeek: tradingMetrics.tradesPerWeek,
-        totalAmountTradedPerWeek: tradingMetrics.totalAmountTradedPerWeek,
+        daysTraded: liquidityData?.daysTraded || 0, // Days per week traded from liquidity analysis
+        totalAmountTradedPerWeek: liquidityData?.totalAmountTradedPerWeek || 0, // Total units traded weekly
         iskPerM3: profitPerM3, // Profit density (ISK per cubic meter)
 
         // Historical price data from actual trades at destination
-        recordedPriceLow: priceData?.low ?? 0,
-        recordedPriceHigh: priceData?.high ?? 0,
-        recordedPriceAverage: priceData?.average ?? 0,
+        recordedPriceLow: liquidityData?.priceData?.low || 0, // Lowest recorded trade price
+        recordedPriceHigh: liquidityData?.priceData?.high || 0, // Highest recorded trade price
+        recordedPriceAverage: liquidityData?.priceData?.average || 0, // Average recorded trade price
 
         // Detailed breakdown (for advanced users)
         details: {
@@ -772,149 +639,6 @@ export class ArbitrageService {
       );
       this.logger.error(
         `🔍 DEBUG: Source: ${sourceSellOrder.locationId} (${sourceSellOrder.price}), Dest: ${destinationSellOrder.locationId} (${destinationSellOrder.price})`,
-      );
-      return null;
-    }
-  }
-
-  /**
-   * Calculate detailed arbitrage opportunity
-   * LEGACY METHOD - kept for backwards compatibility but not used in cross-region logic
-   */
-  private async calculateArbitrageOpportunity(
-    buyOrder: MarketPrice, // Where we buy (sell order)
-    sellOrder: MarketPrice, // Where we sell (buy order)
-    itemType: ItemTypeInfo,
-    quantity: number,
-  ): Promise<ArbitrageOpportunity | null> {
-    try {
-      // Get station information
-      const [buyStation, sellStation] = await Promise.all([
-        this.getStationInfo(buyOrder.locationId),
-        this.getStationInfo(sellOrder.locationId),
-      ]);
-
-      if (!buyStation || !sellStation) {
-        return null;
-      }
-
-      // Calculate taxes and fees
-      const taxCalc = this.calculateTaxes();
-      const logistics = this.calculateLogistics(itemType.volume ?? 1, quantity);
-
-      const buyPrice = buyOrder.price;
-      const sellPrice = sellOrder.price;
-      const totalCost = buyPrice * quantity;
-      const grossRevenue = sellPrice * quantity;
-
-      // Calculate fees
-      const salesTax = grossRevenue * taxCalc.salesTax;
-      const brokerFee = totalCost * taxCalc.brokerFee;
-      const totalFees = salesTax + brokerFee;
-
-      const grossMargin = sellPrice - buyPrice;
-      const netProfit = grossRevenue - totalCost - totalFees;
-      const profitPerM3 = netProfit / logistics.totalVolume;
-
-      // Confidence scoring based on order age and volume
-      const buyOrderAge = this.calculateOrderAge(buyOrder.issued);
-      const sellOrderAge = this.calculateOrderAge(sellOrder.issued);
-      const confidence = this.calculateConfidence(
-        buyOrderAge,
-        sellOrderAge,
-        quantity,
-        buyOrder.volume,
-        sellOrder.volume,
-      );
-
-      // Get trading metrics for this item
-      const tradingMetrics = await this.getTradingMetrics(itemType.id);
-
-      // NEW STREAMLINED FORMAT - same as cross-region method
-      return {
-        // Core item info
-        itemTypeId: Number(itemType.id), // Convert BigInt to number for JSON serialization
-        itemTypeName: itemType.name,
-
-        // Hub routing (solar system names)
-        fromHub: buyStation.solarSystemName,
-        toHub: sellStation.solarSystemName,
-
-        // Key metrics for trading decisions
-        margin: (grossMargin / buyPrice) * 100, // Gross margin percentage
-        possibleProfit: netProfit, // Net profit in ISK
-        tradesPerWeek: tradingMetrics.tradesPerWeek,
-        totalAmountTradedPerWeek: tradingMetrics.totalAmountTradedPerWeek,
-        iskPerM3: profitPerM3, // Profit density (ISK per cubic meter)
-
-        // Historical price data from actual trades at destination (TODO: implement proper fetching)
-        recordedPriceLow: 0, // TODO: Get from destination trading data
-        recordedPriceHigh: 0, // TODO: Get from destination trading data
-        recordedPriceAverage: 0, // TODO: Get from destination trading data
-
-        // Detailed breakdown (for advanced users)
-        details: {
-          itemTypeId: Number(itemType.id), // Convert BigInt to number for JSON serialization
-          itemTypeName: itemType.name,
-          volume: itemType.volume ?? 0,
-
-          buyHub: {
-            stationId: buyOrder.locationId.toString(),
-            stationName: buyStation.name,
-            solarSystemName: buyStation.solarSystemName,
-            regionId: buyStation.regionId,
-            regionName: buyStation.regionName,
-            bestBuyPrice: buyPrice,
-            availableVolume: buyOrder.volume,
-            totalValue: totalCost,
-          },
-
-          sellHub: {
-            stationId: sellOrder.locationId.toString(),
-            stationName: sellStation.name,
-            solarSystemName: sellStation.solarSystemName,
-            regionId: sellStation.regionId,
-            regionName: sellStation.regionName,
-            bestSellPrice: sellPrice,
-            demandVolume: sellOrder.volume,
-            totalValue: grossRevenue,
-          },
-
-          profitAnalysis: {
-            grossMargin,
-            grossMarginPercent: (grossMargin / buyPrice) * 100,
-            netProfit,
-            netProfitPercent: (netProfit / totalCost) * 100,
-            profitPerM3,
-            roi: (netProfit / totalCost) * 100,
-          },
-
-          costs: {
-            buyPrice,
-            sellPrice,
-            salesTax,
-            brokerFee,
-            totalCost: totalCost + brokerFee,
-            totalRevenue: grossRevenue - salesTax,
-          },
-
-          logistics,
-
-          metadata: {
-            calculatedAt: new Date(),
-            buyOrderAge,
-            sellOrderAge,
-            spreadPercent: ((sellPrice - buyPrice) / buyPrice) * 100,
-            confidence,
-          },
-        },
-      };
-    } catch (error: unknown) {
-      const errorMessage =
-        error instanceof Error ? error.message : 'Unknown error';
-      this.logger.error(
-        'Error calculating arbitrage opportunity:',
-        errorMessage,
       );
       return null;
     }
@@ -1225,9 +949,9 @@ export class ArbitrageService {
           aValue = a.details?.profitAnalysis.roi ?? 0; // Access via details
           bValue = b.details?.profitAnalysis.roi ?? 0;
           break;
-        case 'tradesPerWeek':
-          aValue = a.tradesPerWeek; // New sorting option
-          bValue = b.tradesPerWeek;
+        case 'daysTraded':
+          aValue = a.daysTraded; // Days per week traded
+          bValue = b.daysTraded;
           break;
         default: // Default to margin now
           aValue = a.margin;
