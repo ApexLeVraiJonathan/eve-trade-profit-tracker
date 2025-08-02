@@ -26,6 +26,8 @@ model ItemType {
   // Relations
   marketTrades MarketOrderTrade[]
   marketPrices MarketPrice[]
+  cycleItems   CycleItem[]
+  cycleTransactions CycleTransaction[]
   
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
@@ -76,6 +78,7 @@ model Station {
   marketTrades    MarketOrderTrade[] @relation("StationMarketTrades")
   trackedStations TrackedStation[] @relation("StationTracked")
   marketPrices    MarketPrice[] @relation("StationPrices")
+  cycleTransactions CycleTransaction[]
   
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
@@ -170,5 +173,167 @@ model MarketPrice {
   @@unique([itemTypeId, locationId, orderType, price, volume, issued])
   
   @@map("market_prices")
+}
+
+// ===================================
+// CYCLE MANAGEMENT SYSTEM
+// ===================================
+
+// Trading cycles - periods for arbitrage activity (1-2 weeks)
+model TradingCycle {
+  id              String      @id @default(cuid()) @map("cycle_id")
+  name            String?     // Optional user-friendly name
+  sourceHub       String      @map("source_hub") // "jita", "amarr", etc.
+  
+  // Financial planning
+  totalCapital    BigInt      @map("total_capital") // Total ISK allocated to this cycle
+  capitalUsed     BigInt      @default(0) @map("capital_used") // Actually spent ISK
+  
+  // Status tracking
+  status          CycleStatus @default(PLANNED)
+  
+  // Timing
+  startDate       DateTime?   @map("start_date") // When trading begins
+  endDate         DateTime?   @map("end_date")   // When cycle should end
+  completedAt     DateTime?   @map("completed_at") // When actually completed
+  
+  // Configuration
+  cargoCapacity   Int         @default(60000) @map("cargo_capacity") // m³ per shipment
+  minProfitMargin Float       @default(0.15) @map("min_profit_margin") // 15%
+  minLiquidity    Int         @default(4) @map("min_liquidity") // Days per week traded
+  
+  // Transport costs per destination hub
+  transportCosts  Json        @map("transport_costs") // {"amarr": 69000000, "dodixie": 24000000, ...}
+  
+  // Hub allocations
+  hubAllocations  Json        @map("hub_allocations") // {"amarr": 0.5, "dodixie": 0.3, ...}
+  
+  // Performance tracking
+  totalProfit     BigInt      @default(0) @map("total_profit")
+  totalTransportCost BigInt   @default(0) @map("total_transport_cost")
+  
+  // Relations
+  cycleItems      CycleItem[]
+  transactions    CycleTransaction[]
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  @@map("trading_cycles")
+}
+
+// Individual items planned for a cycle (from algorithm results)
+model CycleItem {
+  id              String        @id @default(cuid()) @map("cycle_item_id")
+  cycleId         String        @map("cycle_id")
+  
+  // Item details
+  itemTypeId      Int           @map("item_type_id")
+  itemName        String        @map("item_name")
+  
+  // Trade route
+  sourceHub       String        @map("source_hub")
+  destinationHub  String        @map("destination_hub")
+  
+  // Pricing (from arbitrage calculation)
+  buyPrice        BigInt        @map("buy_price") // Price per unit in ISK
+  sellPrice       BigInt        @map("sell_price") // Expected sell price
+  
+  // Quantities and logistics
+  plannedQuantity Int           @map("planned_quantity") // How many to buy
+  actualQuantity  Int           @default(0) @map("actual_quantity") // Actually bought
+  totalCargo      Float         @map("total_cargo") // m³ for this item
+  
+  // Financial projections
+  totalCost       BigInt        @map("total_cost") // Total ISK to buy
+  expectedProfit  BigInt        @map("expected_profit") // Before transport
+  transportCost   BigInt        @map("transport_cost") // Share of shipment cost
+  netProfit       BigInt        @map("net_profit") // After transport
+  
+  // Market analysis (from arbitrage data)
+  margin          Float         // Profit margin %
+  profitPerM3     BigInt        @map("profit_per_m3")
+  daysTraded      Int           @map("days_traded") // Liquidity metric
+  totalAmountTradedPerWeek Int  @map("total_amount_traded_per_week")
+  
+  // Historical prices for validation
+  recordedPriceLow    BigInt    @map("recorded_price_low")
+  recordedPriceHigh   BigInt    @map("recorded_price_high")
+  recordedPriceAvg    BigInt    @map("recorded_price_avg")
+  
+  // Price validation
+  rawMarketPrice      BigInt    @map("raw_market_price") // Original ESI price
+  validatedPrice      BigInt    @map("validated_price")  // Price used (may be capped)
+  priceWasAdjusted    Boolean   @default(false) @map("price_was_adjusted")
+  priceAdjustment     BigInt    @default(0) @map("price_adjustment")
+  
+  // Status tracking
+  status          CycleItemStatus @default(PLANNED)
+  
+  // Relations
+  cycle           TradingCycle  @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  itemType        ItemType      @relation(fields: [itemTypeId], references: [id])
+  transactions    CycleTransaction[]
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  @@map("cycle_items")
+}
+
+// Actual buy/sell transactions during a cycle
+model CycleTransaction {
+  id              String      @id @default(cuid()) @map("transaction_id")
+  cycleId         String      @map("cycle_id")
+  cycleItemId     String?     @map("cycle_item_id") // Optional: link to planned item
+  
+  // Transaction details
+  transactionType TransactionType @map("transaction_type") // BUY or SELL
+  itemTypeId      Int           @map("item_type_id")
+  quantity        Int           // Units bought/sold
+  pricePerUnit    BigInt        @map("price_per_unit") // Actual ISK per unit
+  totalValue      BigInt        @map("total_value") // Total ISK
+  
+  // Location and timing
+  locationId      BigInt        @map("location_id") // Station where transaction happened
+  executedAt      DateTime      @map("executed_at") // When transaction was done
+  
+  // Performance tracking
+  estimatedPrice  BigInt?       @map("estimated_price") // What we expected to pay/receive
+  variance        BigInt?       @default(0) // Difference from estimate
+  
+  // Relations
+  cycle           TradingCycle  @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  cycleItem       CycleItem?    @relation(fields: [cycleItemId], references: [id])
+  itemType        ItemType      @relation(fields: [itemTypeId], references: [id])
+  station         Station       @relation(fields: [locationId], references: [id])
+  
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  
+  @@map("cycle_transactions")
+}
+
+// Enums for cycle management
+enum CycleStatus {
+  PLANNED     // Cycle created, items planned
+  ACTIVE      // Currently executing trades
+  COMPLETED   // All planned trades done
+  CANCELLED   // Cycle cancelled
+}
+
+enum CycleItemStatus {
+  PLANNED     // Item planned for purchase
+  BUYING      // Looking for good buy orders
+  BOUGHT      // Successfully purchased
+  TRANSPORTING // Being moved to destination
+  SELLING     // Looking for good sell orders
+  SOLD        // Successfully sold
+  CANCELLED   // No longer pursuing this item
+}
+
+enum TransactionType {
+  BUY
+  SELL
 }
 

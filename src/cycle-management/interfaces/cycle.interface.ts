@@ -67,6 +67,7 @@ export interface CycleConfig {
 
 // Algorithm comparison interfaces
 export interface PackedItem {
+  // Basic packing info
   itemTypeId: number;
   itemName: string;
   quantity: number;
@@ -74,6 +75,28 @@ export interface PackedItem {
   totalCargo: number;
   profit: number;
   profitPerM3: number;
+
+  // Full arbitrage opportunity data (includes price validation)
+  originalOpportunity: {
+    fromHub: string;
+    toHub: string;
+    margin: number;
+    possibleProfit: number;
+    daysTraded: number;
+    totalAmountTradedPerWeek: number;
+    iskPerM3: number;
+    recordedPriceLow: number;
+    recordedPriceHigh: number;
+    recordedPriceAverage: number;
+    priceValidation?: {
+      rawMarketPrice: number;
+      validatedPrice: number;
+      wasAdjusted: boolean;
+      adjustment: number;
+      reason: string;
+    };
+    details?: any; // Full details object from arbitrage opportunity
+  };
 }
 
 export interface PackingResult {
@@ -92,4 +115,23 @@ export interface AlgorithmComparison {
   profitDifference: number;
   speedDifference: number;
   recommendation: string;
+
+  // Enhanced stats showing which algorithm achieved each metric
+  winners: {
+    bestProfit: {
+      algorithm: string;
+      value: number;
+      display: string;
+    };
+    bestUtilization: {
+      algorithm: string;
+      value: number;
+      display: string;
+    };
+    fastestExecution: {
+      algorithm: string;
+      value: number;
+      display: string;
+    };
+  };
 }

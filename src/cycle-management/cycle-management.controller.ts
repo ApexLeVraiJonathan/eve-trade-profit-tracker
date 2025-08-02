@@ -1,4 +1,13 @@
-import { Controller, Get, Post, Body, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+  Param,
+  Patch,
+  Delete,
+} from '@nestjs/common';
 import { CycleManagementService } from './cycle-management.service';
 import { ArbitrageService } from '../arbitrage/arbitrage.service';
 import { CreateCycleDto, CycleFiltersDto } from './dto/cycle.dto';
@@ -12,20 +21,60 @@ export class CycleManagementController {
   ) {}
 
   /**
-   * Create a new cycle with custom allocations and filters
+   * Create a new trading cycle and store it in the database
    */
   @Post('create')
-  async createCycle(
-    @Body() createCycleDto: CreateCycleDto,
-  ): Promise<CycleOpportunitiesResponse> {
-    const { sourceHub, totalCapital, allocations, filters } = createCycleDto;
-
-    return this.cycleManagementService.getCycleOpportunities(
+  async createCycle(@Body() createCycleDto: CreateCycleDto) {
+    const {
       sourceHub,
       totalCapital,
       allocations,
-      filters,
-    );
+      cargoCapacity,
+      minProfitMargin,
+      minLiquidity,
+      name,
+      startDate,
+      endDate,
+    } = createCycleDto;
+
+    return await this.cycleManagementService.createCycle({
+      sourceHub,
+      totalCapital,
+      hubAllocations: allocations,
+      cargoCapacity,
+      minProfitMargin,
+      minLiquidity,
+      name,
+      startDate: startDate ? new Date(startDate) : undefined,
+      endDate: endDate ? new Date(endDate) : undefined,
+    });
+  }
+
+  /**
+   * Get all cycles
+   */
+  @Get()
+  async getCycles() {
+    return await this.cycleManagementService.getCycles();
+  }
+
+  /**
+   * Get detailed cycle information by ID
+   */
+  @Get(':cycleId')
+  async getCycleById(@Param('cycleId') cycleId: string) {
+    return await this.cycleManagementService.getCycleById(cycleId);
+  }
+
+  /**
+   * Update cycle status
+   */
+  @Patch(':cycleId/status')
+  async updateCycleStatus(
+    @Param('cycleId') cycleId: string,
+    @Body('status') status: 'PLANNED' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED',
+  ) {
+    return await this.cycleManagementService.updateCycleStatus(cycleId, status);
   }
 
   /**
@@ -175,5 +224,127 @@ export class CycleManagementController {
       rens: 0.1, // 10%
       description: 'Based on historical trade volume and transport efficiency',
     };
+  }
+
+  /**
+   * Record a buy/sell transaction
+   */
+  @Post(':cycleId/transactions')
+  async recordTransaction(
+    @Param('cycleId') cycleId: string,
+    @Body()
+    transaction: {
+      cycleItemId?: string;
+      transactionType: 'BUY' | 'SELL';
+      itemTypeId: number;
+      quantity: number;
+      pricePerUnit: number;
+      locationId: string; // Will be converted to BigInt
+      executedAt?: string; // ISO date string
+      estimatedPrice?: number;
+    },
+  ) {
+    return await this.cycleManagementService.recordTransaction({
+      cycleId,
+      cycleItemId: transaction.cycleItemId,
+      transactionType: transaction.transactionType,
+      itemTypeId: transaction.itemTypeId,
+      quantity: transaction.quantity,
+      pricePerUnit: transaction.pricePerUnit,
+      locationId: BigInt(transaction.locationId),
+      executedAt: transaction.executedAt
+        ? new Date(transaction.executedAt)
+        : undefined,
+      estimatedPrice: transaction.estimatedPrice,
+    });
+  }
+
+  /**
+   * Get transactions for a cycle
+   */
+  @Get(':cycleId/transactions')
+  async getCycleTransactions(@Param('cycleId') cycleId: string) {
+    return await this.cycleManagementService.getCycleTransactions(cycleId);
+  }
+
+  /**
+   * Update cycle item status
+   */
+  @Patch(':cycleId/items/:itemId/status')
+  async updateCycleItemStatus(
+    @Param('cycleId') cycleId: string,
+    @Param('itemId') itemId: string,
+    @Body('status')
+    status:
+      | 'PLANNED'
+      | 'BUYING'
+      | 'BOUGHT'
+      | 'TRANSPORTING'
+      | 'SELLING'
+      | 'SOLD'
+      | 'CANCELLED',
+  ) {
+    return await this.cycleManagementService.updateCycleItemStatus(
+      itemId,
+      status,
+    );
+  }
+
+  /**
+   * Get cycle performance summary
+   */
+  @Get(':cycleId/performance')
+  async getCyclePerformance(@Param('cycleId') cycleId: string) {
+    return await this.cycleManagementService.getCyclePerformance(cycleId);
+  }
+
+  /**
+   * Get shopping list in multi-buy format for EVE Online
+   */
+  @Get(':cycleId/shopping-list')
+  async getCycleShoppingList(@Param('cycleId') cycleId: string) {
+    return await this.cycleManagementService.getCycleShoppingList(cycleId);
+  }
+
+  /**
+   * Get raw multi-buy text for a specific shipment (plain text response)
+   */
+  @Get(':cycleId/shopping-list/:hub/raw')
+  async getRawShoppingList(
+    @Param('cycleId') cycleId: string,
+    @Param('hub') hub: string,
+  ) {
+    const shoppingList =
+      await this.cycleManagementService.getCycleShoppingList(cycleId);
+    const shipment = shoppingList.shipments.find(
+      (s) => s.destinationHub === hub.toLowerCase(),
+    );
+
+    if (!shipment) {
+      throw new Error(`No shipment found for hub: ${hub}`);
+    }
+
+    // Return raw text with actual line breaks
+    return {
+      hub: shipment.destinationHub,
+      totalCost: shipment.totalEstimatedCost,
+      totalProfit: shipment.totalExpectedProfit,
+      itemCount: shipment.itemCount,
+      rawText: shipment.multiBuyFormat,
+      copyPasteFormat: shipment.multiBuyLines.join('\n'), // Proper line breaks
+      instructions: [
+        'Copy the text from "copyPasteFormat" field',
+        'Paste directly into EVE Online Multi-buy tab',
+        `Expected total cost: ${shipment.totalEstimatedCost.toLocaleString()} ISK`,
+      ],
+    };
+  }
+
+  /**
+   * Clear all cycles and related data (for testing purposes)
+   */
+  @Delete('clear-all')
+  async clearAllCycles() {
+    return await this.cycleManagementService.clearAllCycles();
   }
 }

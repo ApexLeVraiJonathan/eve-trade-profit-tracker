@@ -209,10 +209,6 @@ export class LiquidityAnalyzerService {
           priceData: priceStats,
         });
       }
-
-      this.logger.debug(
-        `📊 Item ${typeIdStr}: ${daysCount} days, ${Math.round(avgValue).toLocaleString()} ISK avg → ${passes ? '✅ LIQUID' : '❌ filtered'}`,
-      );
     }
 
     this.logger.log(

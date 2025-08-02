@@ -142,6 +142,30 @@ export class CreateCycleDto {
   allocations?: Record<string, number>;
 
   @IsOptional()
+  @IsNumber()
+  cargoCapacity?: number;
+
+  @IsOptional()
+  @IsNumber()
+  minProfitMargin?: number;
+
+  @IsOptional()
+  @IsNumber()
+  minLiquidity?: number;
+
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @IsString()
+  startDate?: string; // ISO date string
+
+  @IsOptional()
+  @IsString()
+  endDate?: string; // ISO date string
+
+  @IsOptional()
   @IsObject()
   filters?: CycleFiltersDto;
 }

@@ -29,6 +29,15 @@ export interface ArbitrageOpportunityDto {
   recordedPriceHigh: number; // Highest recorded trade price in analysis period
   recordedPriceAverage: number; // Average recorded trade price in analysis period
 
+  // Price validation to prevent inflated opportunities
+  priceValidation?: {
+    rawMarketPrice: number; // Original current market price
+    validatedPrice: number; // Price used in calculations (may be capped by historical data)
+    wasAdjusted: boolean; // True if price was reduced due to historical data
+    adjustment: number; // Amount price was reduced (0 if not adjusted)
+    reason: string; // Explanation of why price was adjusted
+  };
+
   // DEBUG: Source and destination prices for verification
   buyPrice: number; // Price to buy at source
   sellPrice: number; // Price to sell at destination

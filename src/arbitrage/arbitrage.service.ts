@@ -310,11 +310,6 @@ export class ArbitrageService {
     },
   ): Promise<ArbitrageOpportunity[]> {
     const opportunities: ArbitrageOpportunity[] = [];
-
-    this.logger.log(
-      `🔍 ENTER analyzeItemArbitrage: itemTypeId=${itemTypeId}, ${prices.length} prices`,
-    );
-
     // Get item info from map or database
     let itemType:
       | { id: number; name: string; volume: number | null }
@@ -344,10 +339,6 @@ export class ArbitrageService {
       return opportunities;
     }
 
-    this.logger.log(
-      `✅ CHECKPOINT 1: Item ${itemType.name}, volume: ${itemType.volume}m³`,
-    );
-
     // Only analyze sell orders for cross-region arbitrage
     const sellOrders = prices.filter((p) => p.orderType === 'sell');
 
@@ -356,21 +347,6 @@ export class ArbitrageService {
         `❌ EARLY EXIT: Item ${itemType.name} has no sell orders (${prices.length} total prices)`,
       );
       return opportunities;
-    }
-
-    this.logger.log(
-      `✅ CHECKPOINT 2: Item ${itemType.name}, ${sellOrders.length} sell orders`,
-    );
-
-    // DEBUG: Log Photonic items analysis
-    if (itemType.name.toLowerCase().includes('photonic')) {
-      this.logger.log(`🔍 PHOTONIC ANALYSIS: ${itemType.name}`);
-      this.logger.log(`  Sell orders: ${sellOrders.length}`);
-      if (sellOrders.length > 0) {
-        this.logger.log(
-          `  Price range: ${Math.min(...sellOrders.map((o) => o.price))} - ${Math.max(...sellOrders.map((o) => o.price))} ISK`,
-        );
-      }
     }
 
     // GROUP BY REGION and find BEST PRICES in each region
@@ -383,35 +359,11 @@ export class ArbitrageService {
     });
 
     // Sort orders in each region by price (cheapest first)
-    sellOrdersByRegion.forEach((orders, regionId) => {
+    sellOrdersByRegion.forEach((orders) => {
       orders.sort((a, b) => a.price - b.price);
-      // DEBUG: Log price selection for Photonic items
-      if (itemType.name.includes('Photonic')) {
-        this.logger.log(
-          `  Region ${regionId}: [${orders
-            .slice(0, 2)
-            .map((o) => o.price)
-            .join(', ')}] ISK`,
-        );
-      }
     });
 
-    // Removed general debug logging
-
     // Find cross-region arbitrage opportunities using BEST PRICES
-    let comparisons = 0;
-    let unprofitable = 0;
-    let profitable = 0;
-
-    // DEBUG: Log detailed analysis for ALL items to find the issue
-    this.logger.log(
-      `🔍 ANALYZING: ${itemType.name} - Regions: ${Array.from(sellOrdersByRegion.keys()).join(', ')}`,
-    );
-    for (const [regionId, orders] of sellOrdersByRegion) {
-      this.logger.log(
-        `🔍   Region ${regionId}: ${orders.length} orders, cheapest: ${orders[0]?.price} ISK`,
-      );
-    }
 
     for (const [sourceRegionId, sourceOrders] of sellOrdersByRegion) {
       if (sourceOrders.length === 0) continue;
@@ -427,26 +379,10 @@ export class ArbitrageService {
         const competitiveDestOrder =
           destOrders.length > 1 ? destOrders[1] : destOrders[0];
 
-        // DEBUG: Log every arbitrage calculation to find the issue
-        this.logger.log(
-          `🔍 COMPARING: ${itemType.name} - Region ${sourceRegionId}→${destRegionId}: ${bestSourceOrder.price} → ${competitiveDestOrder.price} ISK`,
-        );
-
-        comparisons++;
-
         // Only consider profitable opportunities
         if (competitiveDestOrder.price <= bestSourceOrder.price) {
-          unprofitable++;
-          this.logger.log(
-            `❌ UNPROFITABLE: ${itemType.name} - ${bestSourceOrder.price} → ${competitiveDestOrder.price} (lose ${bestSourceOrder.price - competitiveDestOrder.price} ISK)`,
-          );
           continue;
         }
-
-        profitable++;
-        this.logger.log(
-          `✅ PROFITABLE: ${itemType.name} - ${bestSourceOrder.price} → ${competitiveDestOrder.price} (gain ${competitiveDestOrder.price - bestSourceOrder.price} ISK)`,
-        );
 
         const opportunity = await this.calculateCrossRegionArbitrageOpportunity(
           bestSourceOrder,
@@ -455,34 +391,11 @@ export class ArbitrageService {
           Math.min(bestSourceOrder.volume, competitiveDestOrder.volume),
           liquidityData,
         );
-
-        // DEBUG: Log opportunity calculation result for ALL items
-        if (opportunity) {
-          this.logger.log(
-            `💰 OPPORTUNITY: ${itemType.name} - Margin: ${opportunity.margin}%, Profit: ${opportunity.possibleProfit} ISK`,
-          );
-          const meetsFilter = this.meetsFilterCriteria(opportunity, filters);
-          if (!meetsFilter) {
-            this.logger.log(
-              `❌ FILTERED OUT: ${itemType.name} - Does not meet filter criteria`,
-            );
-          }
-        } else {
-          this.logger.log(
-            `⚠️ NULL RESULT: ${itemType.name} - Opportunity calculation returned null (check calculateCrossRegionArbitrageOpportunity)`,
-          );
-        }
-
         if (opportunity && this.meetsFilterCriteria(opportunity, filters)) {
           opportunities.push(opportunity);
         }
       }
     }
-
-    // DEBUG: Log summary for debugging
-    this.logger.log(
-      `🔍 DEBUG: ${itemType.name} - Comparisons: ${comparisons}, Unprofitable: ${unprofitable}, Profitable: ${profitable}, Final opportunities: ${opportunities.length}`,
-    );
 
     return opportunities;
   }
@@ -524,7 +437,25 @@ export class ArbitrageService {
       const logistics = this.calculateLogistics(itemType.volume ?? 1, quantity);
 
       const sourceBuyPrice = sourceSellOrder.price; // Price to buy from source region
-      const destinationSellPrice = destinationSellOrder.price; // Competitive sell price in destination
+
+      // 🔍 PRICE VALIDATION: Use historical data to prevent inflated profit margins
+      const rawDestinationPrice = destinationSellOrder.price; // Current market price
+      const historicalHighPrice = liquidityData?.priceData?.high || 0; // Highest historically traded price
+
+      // If current price exceeds historical high, use historical high (prevents false opportunities)
+      // If current price is within historical range, use current price (normal trading)
+      const destinationSellPrice =
+        historicalHighPrice > 0
+          ? Math.min(rawDestinationPrice, historicalHighPrice)
+          : rawDestinationPrice;
+
+      // Track if price was adjusted for transparency
+      const priceWasAdjusted =
+        historicalHighPrice > 0 && rawDestinationPrice > historicalHighPrice;
+      const priceAdjustment = priceWasAdjusted
+        ? rawDestinationPrice - destinationSellPrice
+        : 0;
+
       const totalCost = sourceBuyPrice * quantity;
       const grossRevenue = destinationSellPrice * quantity;
 
@@ -572,6 +503,17 @@ export class ArbitrageService {
         recordedPriceLow: liquidityData?.priceData?.low || 0, // Lowest recorded trade price
         recordedPriceHigh: liquidityData?.priceData?.high || 0, // Highest recorded trade price
         recordedPriceAverage: liquidityData?.priceData?.average || 0, // Average recorded trade price
+
+        // Price validation to prevent inflated opportunities
+        priceValidation: {
+          rawMarketPrice: rawDestinationPrice,
+          validatedPrice: destinationSellPrice,
+          wasAdjusted: priceWasAdjusted,
+          adjustment: priceAdjustment,
+          reason: priceWasAdjusted
+            ? `Current price ${rawDestinationPrice.toLocaleString()} ISK exceeds historical high ${historicalHighPrice.toLocaleString()} ISK. Using historical price to prevent false opportunity.`
+            : 'Current price is within historical trading range.',
+        },
 
         // Detailed breakdown (for advanced users)
         details: {
@@ -810,25 +752,14 @@ export class ArbitrageService {
     filters?: ArbitrageFilters,
   ): boolean {
     if (!filters) {
-      this.logger.log(
-        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - No filters provided, PASS`,
-      );
       return true;
     }
-
-    this.logger.log(
-      `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - Checking filters...`,
-    );
-    this.logger.log(`🔍 FILTER DEBUG: Filters: ${JSON.stringify(filters)}`);
 
     // Hub filtering (case-insensitive)
     if (
       filters.fromHub &&
       opportunity.fromHub.toLowerCase() !== filters.fromHub.toLowerCase()
     ) {
-      this.logger.log(
-        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED fromHub filter: ${opportunity.fromHub} !== ${filters.fromHub}`,
-      );
       return false;
     }
 
@@ -836,17 +767,11 @@ export class ArbitrageService {
       filters.toHub &&
       opportunity.toHub.toLowerCase() !== filters.toHub.toLowerCase()
     ) {
-      this.logger.log(
-        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED toHub filter: ${opportunity.toHub} !== ${filters.toHub}`,
-      );
       return false;
     }
 
     // Updated field access for new streamlined format
     if (filters.minProfit && opportunity.possibleProfit < filters.minProfit) {
-      this.logger.log(
-        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED minProfit filter: ${opportunity.possibleProfit} < ${filters.minProfit}`,
-      );
       return false;
     }
 
@@ -854,9 +779,6 @@ export class ArbitrageService {
       filters.minMarginPercent &&
       opportunity.margin < filters.minMarginPercent
     ) {
-      this.logger.log(
-        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED minMarginPercent filter: ${opportunity.margin}% < ${filters.minMarginPercent}%`,
-      );
       return false;
     }
 
@@ -864,9 +786,6 @@ export class ArbitrageService {
       filters.maxCargoVolume &&
       (opportunity.details?.logistics.totalCargo ?? 0) > filters.maxCargoVolume
     ) {
-      this.logger.log(
-        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED maxCargoVolume filter: ${opportunity.details?.logistics.totalCargo} > ${filters.maxCargoVolume}`,
-      );
       return false;
     }
 
@@ -874,9 +793,6 @@ export class ArbitrageService {
       filters.maxInvestment &&
       (opportunity.details?.costs.totalCost ?? 0) > filters.maxInvestment
     ) {
-      this.logger.log(
-        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED maxInvestment filter: ${opportunity.details?.costs.totalCost} > ${filters.maxInvestment}`,
-      );
       return false;
     }
 
@@ -884,9 +800,6 @@ export class ArbitrageService {
       filters.minProfitPerM3 &&
       opportunity.iskPerM3 < filters.minProfitPerM3
     ) {
-      this.logger.log(
-        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED minProfitPerM3 filter: ${opportunity.iskPerM3} < ${filters.minProfitPerM3}`,
-      );
       return false;
     }
 
@@ -894,15 +807,9 @@ export class ArbitrageService {
       filters.excludeHighRisk &&
       opportunity.details?.metadata.confidence === 'low'
     ) {
-      this.logger.log(
-        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED excludeHighRisk filter: confidence is low`,
-      );
       return false;
     }
 
-    this.logger.log(
-      `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - PASSED all filters`,
-    );
     return true;
   }
 
@@ -1057,22 +964,12 @@ export class ArbitrageService {
     const itemTypeMap = new Map(itemTypes.map((item) => [item.id, item]));
 
     // Analyze each item for arbitrage opportunities on this specific route
-    let itemIndex = 0;
     for (const [itemTypeId, prices] of pricesByItem) {
-      itemIndex++;
-      this.logger.log(
-        `🔍 PROCESSING ITEM ${itemIndex}/${pricesByItem.size}: ID ${itemTypeId} with ${prices.length} prices`,
-      );
-
       const itemOpportunities = await this.analyzeItemArbitrage(
         parseInt(itemTypeId),
         prices,
         filters,
         itemTypeMap,
-      );
-
-      this.logger.log(
-        `🔍 ITEM ${itemTypeId} RESULT: ${itemOpportunities.length} opportunities found`,
       );
       opportunities.push(...itemOpportunities);
     }

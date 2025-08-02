@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
 import { ArbitrageService } from '../arbitrage/arbitrage.service';
 import { ArbitrageOpportunity } from '../arbitrage/interfaces/arbitrage.interface';
 import {
@@ -15,7 +16,10 @@ import {
 export class CycleManagementService {
   private readonly logger = new Logger(CycleManagementService.name);
 
-  constructor(private readonly arbitrageService: ArbitrageService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly arbitrageService: ArbitrageService,
+  ) {}
 
   /**
    * Get cycle opportunities with capital allocation and transport cost analysis
@@ -452,6 +456,20 @@ export class CycleManagementService {
           totalCargo,
           profit,
           profitPerM3: profit / totalCargo,
+          originalOpportunity: {
+            fromHub: opp.fromHub,
+            toHub: opp.toHub,
+            margin: opp.margin,
+            possibleProfit: opp.possibleProfit,
+            daysTraded: opp.daysTraded,
+            totalAmountTradedPerWeek: opp.totalAmountTradedPerWeek,
+            iskPerM3: opp.iskPerM3,
+            recordedPriceLow: opp.recordedPriceLow,
+            recordedPriceHigh: opp.recordedPriceHigh,
+            recordedPriceAverage: opp.recordedPriceAverage,
+            priceValidation: opp.priceValidation,
+            details: opp.details,
+          },
         });
 
         remainingBudget -= totalCost;
@@ -483,7 +501,7 @@ export class CycleManagementService {
     cargoCapacity: number,
   ): Promise<PackingResult> {
     const startTime = performance.now();
-    const MAX_EXECUTION_TIME = 5000; // 5 second timeout
+    const MAX_EXECUTION_TIME = 60000; // 60 second timeout
 
     let bestCombination: PackedItem[] = [];
     let bestProfit = 0;
@@ -567,6 +585,21 @@ export class CycleManagementService {
                     totalCargo: cargo,
                     profit,
                     profitPerM3: profit / cargo,
+                    originalOpportunity: {
+                      fromHub: item.opp.fromHub,
+                      toHub: item.opp.toHub,
+                      margin: item.opp.margin,
+                      possibleProfit: item.opp.possibleProfit,
+                      daysTraded: item.opp.daysTraded,
+                      totalAmountTradedPerWeek:
+                        item.opp.totalAmountTradedPerWeek,
+                      iskPerM3: item.opp.iskPerM3,
+                      recordedPriceLow: item.opp.recordedPriceLow,
+                      recordedPriceHigh: item.opp.recordedPriceHigh,
+                      recordedPriceAverage: item.opp.recordedPriceAverage,
+                      priceValidation: item.opp.priceValidation,
+                      details: item.opp.details,
+                    },
                   },
                 ]
               : currentItems;
@@ -585,6 +618,12 @@ export class CycleManagementService {
     searchCombinations(0, budget - transportCost, cargoCapacity, [], 0);
 
     const endTime = performance.now();
+    const executionTime = endTime - startTime;
+
+    // Log timeout information for dynamic programming
+    this.logger.log(
+      `🎯 Dynamic Programming completed in ${executionTime.toFixed(1)}ms (timeout: ${MAX_EXECUTION_TIME}ms, used: ${((executionTime / MAX_EXECUTION_TIME) * 100).toFixed(1)}%)`,
+    );
     const totalCargo = bestCombination.reduce(
       (sum, item) => sum + item.totalCargo,
       0,
@@ -657,6 +696,20 @@ export class CycleManagementService {
           totalCargo,
           profit,
           profitPerM3: profit / totalCargo,
+          originalOpportunity: {
+            fromHub: opp.fromHub,
+            toHub: opp.toHub,
+            margin: opp.margin,
+            possibleProfit: opp.possibleProfit,
+            daysTraded: opp.daysTraded,
+            totalAmountTradedPerWeek: opp.totalAmountTradedPerWeek,
+            iskPerM3: opp.iskPerM3,
+            recordedPriceLow: opp.recordedPriceLow,
+            recordedPriceHigh: opp.recordedPriceHigh,
+            recordedPriceAverage: opp.recordedPriceAverage,
+            priceValidation: opp.priceValidation,
+            details: opp.details,
+          },
         });
 
         remainingBudget -= totalCost;
@@ -708,6 +761,20 @@ export class CycleManagementService {
           totalCargo,
           profit,
           profitPerM3: profit / totalCargo,
+          originalOpportunity: {
+            fromHub: opp.fromHub,
+            toHub: opp.toHub,
+            margin: opp.margin,
+            possibleProfit: opp.possibleProfit,
+            daysTraded: opp.daysTraded,
+            totalAmountTradedPerWeek: opp.totalAmountTradedPerWeek,
+            iskPerM3: opp.iskPerM3,
+            recordedPriceLow: opp.recordedPriceLow,
+            recordedPriceHigh: opp.recordedPriceHigh,
+            recordedPriceAverage: opp.recordedPriceAverage,
+            priceValidation: opp.priceValidation,
+            details: opp.details,
+          },
         });
 
         remainingBudget -= totalCost;
@@ -735,20 +802,52 @@ export class CycleManagementService {
   private createComparison(
     algorithms: Record<string, PackingResult>,
   ): AlgorithmComparison {
-    const results = Object.values(algorithms);
-    const maxProfit = Math.max(...results.map((r) => r.totalProfit));
-    const maxUtilization = Math.max(...results.map((r) => r.cargoUtilization));
-    const minTime = Math.min(...results.map((r) => r.executionTimeMs));
+    const results = Object.entries(algorithms);
+
+    // Find which algorithm achieved each metric
+    const profitLeader = results.reduce((best, current) =>
+      current[1].totalProfit > best[1].totalProfit ? current : best,
+    );
+
+    const utilizationLeader = results.reduce((best, current) =>
+      current[1].cargoUtilization > best[1].cargoUtilization ? current : best,
+    );
+
+    const speedLeader = results.reduce((best, current) =>
+      current[1].executionTimeMs < best[1].executionTimeMs ? current : best,
+    );
+
+    const maxProfit = profitLeader[1].totalProfit;
+    const maxUtilization = utilizationLeader[1].cargoUtilization;
+    const minTime = speedLeader[1].executionTimeMs;
+    const minProfit = Math.min(...results.map(([_, r]) => r.totalProfit));
+    const maxTime = Math.max(...results.map(([_, r]) => r.executionTimeMs));
 
     return {
       maxProfit,
       maxUtilization,
       minTime,
-      profitDifference:
-        maxProfit - Math.min(...results.map((r) => r.totalProfit)),
-      speedDifference:
-        Math.max(...results.map((r) => r.executionTimeMs)) - minTime,
+      profitDifference: maxProfit - minProfit,
+      speedDifference: maxTime - minTime,
       recommendation: this.getRecommendation(algorithms),
+      // Enhanced stats showing which algorithm achieved each metric
+      winners: {
+        bestProfit: {
+          algorithm: profitLeader[0],
+          value: profitLeader[1].totalProfit,
+          display: `${profitLeader[1].algorithm} achieved highest profit: ${profitLeader[1].totalProfit.toLocaleString()} ISK`,
+        },
+        bestUtilization: {
+          algorithm: utilizationLeader[0],
+          value: utilizationLeader[1].cargoUtilization,
+          display: `${utilizationLeader[1].algorithm} achieved best cargo utilization: ${utilizationLeader[1].cargoUtilization.toFixed(2)}%`,
+        },
+        fastestExecution: {
+          algorithm: speedLeader[0],
+          value: speedLeader[1].executionTimeMs,
+          display: `${speedLeader[1].algorithm} was fastest: ${speedLeader[1].executionTimeMs.toFixed(1)}ms`,
+        },
+      },
     };
   }
 
@@ -775,5 +874,581 @@ export class CycleManagementService {
     });
 
     return `${bestName} offers the best balance of profit, efficiency, and speed`;
+  }
+
+  /**
+   * Create a new trading cycle from greedy algorithm results
+   */
+  async createCycle(request: {
+    sourceHub: string;
+    totalCapital: number;
+    hubAllocations?: { [hub: string]: number };
+    cargoCapacity?: number;
+    minProfitMargin?: number;
+    minLiquidity?: number;
+    name?: string;
+    startDate?: Date;
+    endDate?: Date;
+  }) {
+    this.logger.log(
+      `🔄 Creating cycle: ${request.sourceHub} → Multiple hubs, Capital: ${request.totalCapital.toLocaleString()} ISK`,
+    );
+
+    // Default configurations
+    const defaultAllocations = {
+      amarr: 0.5,
+      dodixie: 0.3,
+      hek: 0.1,
+      rens: 0.1,
+    };
+
+    const hubAllocations = request.hubAllocations || defaultAllocations;
+    const cargoCapacity = request.cargoCapacity || 60000;
+    const minProfitMargin = request.minProfitMargin || 0.15;
+    const minLiquidity = request.minLiquidity || 4;
+
+    // Transport costs (1.5M ISK per jump for 60km³)
+    const transportCosts = {
+      amarr: 69000000, // 46 jumps
+      dodixie: 24000000, // 16 jumps
+      hek: 30000000, // 20 jumps
+      rens: 39000000, // 26 jumps
+    };
+
+    try {
+      // Create the cycle record
+      const cycle = await this.prisma.tradingCycle.create({
+        data: {
+          name: request.name || `${request.sourceHub} Multi-Hub Cycle`,
+          sourceHub: request.sourceHub.toLowerCase(),
+          totalCapital: BigInt(Math.round(request.totalCapital)),
+          cargoCapacity,
+          minProfitMargin,
+          minLiquidity,
+          transportCosts: transportCosts as any,
+          hubAllocations: hubAllocations as any,
+          startDate: request.startDate,
+          endDate: request.endDate,
+          status: 'PLANNED',
+        },
+      });
+
+      this.logger.log(`✅ Created cycle ${cycle.id}`);
+
+      // For each destination hub, get opportunities and create cycle items
+      const allCycleItems: any[] = [];
+      let totalPlannedProfit = 0;
+      let totalPlannedCost = 0;
+
+      for (const [destinationHub, allocation] of Object.entries(
+        hubAllocations,
+      )) {
+        const hubCapital = Math.floor(request.totalCapital * allocation);
+        const hubTransportCost = transportCosts[destinationHub] || 0;
+
+        this.logger.log(
+          `📊 Processing ${destinationHub}: ${hubCapital.toLocaleString()} ISK (${(allocation * 100).toFixed(1)}%)`,
+        );
+
+        // Get opportunities for this hub using the arbitrage service
+        const hubOpportunities =
+          await this.arbitrageService.findMultiHubArbitrageOpportunities({
+            sourceHub: request.sourceHub,
+            destinationHubs: [destinationHub],
+            filters: {
+              minMarginPercent: minProfitMargin * 100, // Convert to percentage
+              sortBy: 'profitPerM3',
+              sortOrder: 'desc',
+              limit: 100,
+            },
+          });
+
+        // Filter by liquidity (days traded per week)
+        const liquidOpportunities = hubOpportunities.filter(
+          (opp) => opp.daysTraded >= minLiquidity,
+        );
+
+        // Use the greedy packing algorithm from our algorithm competition
+        const packingResult = await this.packGreedyCurrent(
+          liquidOpportunities,
+          hubCapital,
+          hubTransportCost,
+          cargoCapacity,
+        );
+
+        // Create cycle items from the packing results
+        for (const item of packingResult.items) {
+          const cycleItem = await this.prisma.cycleItem.create({
+            data: {
+              cycleId: cycle.id,
+              itemTypeId: item.itemTypeId,
+              itemName: item.itemName,
+              sourceHub: request.sourceHub.toLowerCase(),
+              destinationHub: destinationHub.toLowerCase(),
+              buyPrice: BigInt(Math.round(item.totalCost / item.quantity)),
+              sellPrice: BigInt(
+                Math.round(
+                  item.originalOpportunity.priceValidation?.validatedPrice || 0,
+                ),
+              ),
+              plannedQuantity: item.quantity,
+              totalCargo: item.totalCargo,
+              totalCost: BigInt(Math.round(item.totalCost)),
+              expectedProfit: BigInt(Math.round(item.profit)),
+              transportCost: BigInt(
+                Math.round(hubTransportCost / packingResult.items.length),
+              ), // Split evenly
+              netProfit: BigInt(
+                Math.round(
+                  item.profit - hubTransportCost / packingResult.items.length,
+                ),
+              ),
+              margin: item.originalOpportunity.margin,
+              profitPerM3: BigInt(Math.round(item.profitPerM3)),
+              daysTraded: item.originalOpportunity.daysTraded,
+              totalAmountTradedPerWeek:
+                item.originalOpportunity.totalAmountTradedPerWeek,
+              recordedPriceLow: BigInt(
+                Math.round(item.originalOpportunity.recordedPriceLow),
+              ),
+              recordedPriceHigh: BigInt(
+                Math.round(item.originalOpportunity.recordedPriceHigh),
+              ),
+              recordedPriceAvg: BigInt(
+                Math.round(item.originalOpportunity.recordedPriceAverage),
+              ),
+              rawMarketPrice: BigInt(
+                Math.round(
+                  item.originalOpportunity.priceValidation?.rawMarketPrice || 0,
+                ),
+              ),
+              validatedPrice: BigInt(
+                Math.round(
+                  item.originalOpportunity.priceValidation?.validatedPrice || 0,
+                ),
+              ),
+              priceWasAdjusted:
+                item.originalOpportunity.priceValidation?.wasAdjusted || false,
+              priceAdjustment: BigInt(
+                Math.round(
+                  item.originalOpportunity.priceValidation?.adjustment || 0,
+                ),
+              ),
+              status: 'PLANNED',
+            },
+          });
+
+          allCycleItems.push(cycleItem);
+        }
+
+        totalPlannedProfit += packingResult.totalProfit;
+        totalPlannedCost += packingResult.items.reduce(
+          (sum, item) => sum + item.totalCost,
+          0,
+        );
+
+        this.logger.log(
+          `✅ ${destinationHub}: ${packingResult.items.length} items, ${packingResult.totalProfit.toLocaleString()} ISK profit`,
+        );
+      }
+
+      // Update the cycle with totals
+      await this.prisma.tradingCycle.update({
+        where: { id: cycle.id },
+        data: {
+          capitalUsed: BigInt(Math.round(totalPlannedCost)),
+          totalProfit: BigInt(Math.round(totalPlannedProfit)),
+          totalTransportCost: BigInt(
+            Math.round(
+              Object.values(transportCosts).reduce((a, b) => a + b, 0),
+            ),
+          ),
+        },
+      });
+
+      this.logger.log(
+        `🎯 Cycle created successfully: ${allCycleItems.length} items, ${totalPlannedProfit.toLocaleString()} ISK projected profit`,
+      );
+
+      // Return the created cycle with items
+      return await this.prisma.tradingCycle.findUnique({
+        where: { id: cycle.id },
+        include: {
+          cycleItems: true,
+          _count: {
+            select: {
+              cycleItems: true,
+              transactions: true,
+            },
+          },
+        },
+      });
+    } catch (error) {
+      this.logger.error(`❌ Failed to create cycle: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Get all cycles with basic information
+   */
+  async getCycles() {
+    return await this.prisma.tradingCycle.findMany({
+      include: {
+        _count: {
+          select: {
+            cycleItems: true,
+            transactions: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Get detailed cycle information including all items
+   */
+  async getCycleById(cycleId: string) {
+    const cycle = await this.prisma.tradingCycle.findUnique({
+      where: { id: cycleId },
+      include: {
+        cycleItems: {
+          orderBy: { netProfit: 'desc' },
+        },
+        transactions: {
+          orderBy: { executedAt: 'desc' },
+        },
+        _count: {
+          select: {
+            cycleItems: true,
+            transactions: true,
+          },
+        },
+      },
+    });
+
+    if (!cycle) {
+      throw new Error(`Cycle ${cycleId} not found`);
+    }
+
+    return cycle;
+  }
+
+  /**
+   * Update cycle status
+   */
+  async updateCycleStatus(
+    cycleId: string,
+    status: 'PLANNED' | 'ACTIVE' | 'COMPLETED' | 'CANCELLED',
+  ) {
+    return await this.prisma.tradingCycle.update({
+      where: { id: cycleId },
+      data: {
+        status,
+        ...(status === 'COMPLETED' ? { completedAt: new Date() } : {}),
+      },
+    });
+  }
+
+  /**
+   * Record a buy/sell transaction
+   */
+  async recordTransaction(request: {
+    cycleId: string;
+    cycleItemId?: string;
+    transactionType: 'BUY' | 'SELL';
+    itemTypeId: number;
+    quantity: number;
+    pricePerUnit: number;
+    locationId: bigint;
+    executedAt?: Date;
+    estimatedPrice?: number;
+  }) {
+    const totalValue = request.quantity * request.pricePerUnit;
+    const variance = request.estimatedPrice
+      ? totalValue - request.quantity * request.estimatedPrice
+      : 0;
+
+    const transaction = await this.prisma.cycleTransaction.create({
+      data: {
+        cycleId: request.cycleId,
+        cycleItemId: request.cycleItemId,
+        transactionType: request.transactionType,
+        itemTypeId: request.itemTypeId,
+        quantity: request.quantity,
+        pricePerUnit: BigInt(Math.round(request.pricePerUnit)),
+        totalValue: BigInt(Math.round(totalValue)),
+        locationId: request.locationId,
+        executedAt: request.executedAt || new Date(),
+        estimatedPrice: request.estimatedPrice
+          ? BigInt(Math.round(request.estimatedPrice))
+          : null,
+        variance: BigInt(Math.round(variance)),
+      },
+    });
+
+    // Update cycle item status if linked
+    if (request.cycleItemId) {
+      const newStatus = request.transactionType === 'BUY' ? 'BOUGHT' : 'SOLD';
+      await this.prisma.cycleItem.update({
+        where: { id: request.cycleItemId },
+        data: {
+          status: newStatus,
+          ...(request.transactionType === 'BUY'
+            ? { actualQuantity: request.quantity }
+            : {}),
+        },
+      });
+    }
+
+    this.logger.log(
+      `📝 Recorded ${request.transactionType}: ${request.quantity}x ${request.itemTypeId} @ ${request.pricePerUnit.toLocaleString()} ISK`,
+    );
+
+    return transaction;
+  }
+
+  /**
+   * Get transactions for a cycle
+   */
+  async getCycleTransactions(cycleId: string) {
+    return await this.prisma.cycleTransaction.findMany({
+      where: { cycleId },
+      include: {
+        itemType: true,
+        station: true,
+        cycleItem: true,
+      },
+      orderBy: { executedAt: 'desc' },
+    });
+  }
+
+  /**
+   * Update cycle item status
+   */
+  async updateCycleItemStatus(
+    cycleItemId: string,
+    status:
+      | 'PLANNED'
+      | 'BUYING'
+      | 'BOUGHT'
+      | 'TRANSPORTING'
+      | 'SELLING'
+      | 'SOLD'
+      | 'CANCELLED',
+  ) {
+    return await this.prisma.cycleItem.update({
+      where: { id: cycleItemId },
+      data: { status },
+    });
+  }
+
+  /**
+   * Get shopping list for multi-buy in EVE Online
+   */
+  async getCycleShoppingList(cycleId: string) {
+    const cycle = await this.prisma.tradingCycle.findUnique({
+      where: { id: cycleId },
+      include: {
+        cycleItems: {
+          where: {
+            status: { in: ['PLANNED', 'BUYING'] },
+          },
+          orderBy: [{ destinationHub: 'asc' }, { netProfit: 'desc' }],
+        },
+      },
+    });
+
+    if (!cycle) {
+      throw new Error(`Cycle ${cycleId} not found`);
+    }
+
+    // Group items by destination hub for separate shipments
+    const shipments = {};
+    let totalCostAllShipments = 0;
+
+    cycle.cycleItems.forEach((item) => {
+      const hub = item.destinationHub;
+      if (!shipments[hub]) {
+        shipments[hub] = {
+          hub,
+          items: [],
+          totalCost: 0,
+          totalProfit: 0,
+          itemCount: 0,
+        };
+      }
+
+      const itemCost = Number(item.totalCost);
+      shipments[hub].items.push({
+        name: item.itemName,
+        quantity: item.plannedQuantity,
+        estimatedCostPerUnit: Number(item.buyPrice),
+        totalEstimatedCost: itemCost,
+        expectedProfit: Number(item.netProfit),
+        daysTraded: item.daysTraded,
+        priceWasAdjusted: item.priceWasAdjusted,
+      });
+
+      shipments[hub].totalCost += itemCost;
+      shipments[hub].totalProfit += Number(item.netProfit);
+      shipments[hub].itemCount += 1;
+      totalCostAllShipments += itemCost;
+    });
+
+    // Generate multi-buy format for each shipment
+    const shoppingLists = Object.values(shipments).map((shipment: any) => {
+      const multiBuyText = shipment.items
+        .map((item) => `${item.name}\t${item.quantity}`)
+        .join('\n');
+
+      const itemDetails = shipment.items.map((item) => ({
+        name: item.name,
+        quantity: item.quantity,
+        estimatedCostPerUnit: item.estimatedCostPerUnit,
+        totalEstimatedCost: item.totalEstimatedCost,
+        expectedProfit: item.expectedProfit,
+        daysTraded: item.daysTraded,
+        priceWasAdjusted: item.priceWasAdjusted,
+        profitPerM3: Math.round(item.expectedProfit / (item.quantity * 0.01)), // Assuming 0.01m³ per item average
+      }));
+
+      return {
+        destinationHub: shipment.hub,
+        totalEstimatedCost: shipment.totalCost,
+        totalExpectedProfit: shipment.totalProfit,
+        itemCount: shipment.itemCount,
+        multiBuyFormat: multiBuyText,
+        multiBuyLines: shipment.items.map(
+          (item) => `${item.name}\t${item.quantity}`,
+        ), // Array of lines for easier handling
+        itemDetails,
+        instructions: [
+          `1. Go to ${cycle.sourceHub.toUpperCase()} (${cycle.sourceHub === 'jita' ? 'Jita IV - Moon 4 - Caldari Navy Assembly Plant' : 'Trade Hub'})`,
+          '2. Open Market window',
+          '3. Click "Multi-buy" tab',
+          '4. For proper line breaks, use: GET /cycle/{id}/shopping-list/{hub}/raw',
+          '5. Copy the "copyPasteFormat" field from the raw endpoint',
+          '6. Paste directly into EVE Online Multi-buy tab',
+          `7. Verify total cost is around ${shipment.totalCost.toLocaleString()} ISK`,
+          '8. Check individual prices for outliers before buying',
+          `9. Transport to ${shipment.hub.toUpperCase()}`,
+          `10. Expected profit: ${shipment.totalProfit.toLocaleString()} ISK`,
+        ],
+      };
+    });
+
+    return {
+      cycle: {
+        id: cycle.id,
+        name: cycle.name,
+        sourceHub: cycle.sourceHub,
+        status: cycle.status,
+      },
+      summary: {
+        totalShipments: shoppingLists.length,
+        totalItems: cycle.cycleItems.length,
+        totalEstimatedCost: totalCostAllShipments,
+        totalExpectedProfit: shoppingLists.reduce(
+          (sum, s) => sum + s.totalExpectedProfit,
+          0,
+        ),
+      },
+      shipments: shoppingLists,
+    };
+  }
+
+  /**
+   * Get cycle performance summary
+   */
+  async getCyclePerformance(cycleId: string) {
+    const cycle = await this.prisma.tradingCycle.findUnique({
+      where: { id: cycleId },
+      include: {
+        cycleItems: true,
+        transactions: true,
+      },
+    });
+
+    if (!cycle) {
+      throw new Error(`Cycle ${cycleId} not found`);
+    }
+
+    // Calculate performance metrics
+    const buyTransactions = cycle.transactions.filter(
+      (t) => t.transactionType === 'BUY',
+    );
+    const sellTransactions = cycle.transactions.filter(
+      (t) => t.transactionType === 'SELL',
+    );
+
+    const totalInvested = buyTransactions.reduce(
+      (sum, t) => sum + Number(t.totalValue),
+      0,
+    );
+    const totalReceived = sellTransactions.reduce(
+      (sum, t) => sum + Number(t.totalValue),
+      0,
+    );
+    const actualProfit = totalReceived - totalInvested;
+
+    const plannedProfit = Number(cycle.totalProfit);
+    const profitVariance = actualProfit - plannedProfit;
+
+    return {
+      cycle: {
+        id: cycle.id,
+        name: cycle.name,
+        status: cycle.status,
+        plannedProfit,
+        actualProfit,
+        profitVariance,
+        totalInvested,
+        totalReceived,
+        efficiency:
+          plannedProfit > 0 ? (actualProfit / plannedProfit) * 100 : 0,
+      },
+      items: {
+        total: cycle.cycleItems.length,
+        planned: cycle.cycleItems.filter((i) => i.status === 'PLANNED').length,
+        buying: cycle.cycleItems.filter((i) => i.status === 'BUYING').length,
+        bought: cycle.cycleItems.filter((i) => i.status === 'BOUGHT').length,
+        transporting: cycle.cycleItems.filter(
+          (i) => i.status === 'TRANSPORTING',
+        ).length,
+        selling: cycle.cycleItems.filter((i) => i.status === 'SELLING').length,
+        sold: cycle.cycleItems.filter((i) => i.status === 'SOLD').length,
+        cancelled: cycle.cycleItems.filter((i) => i.status === 'CANCELLED')
+          .length,
+      },
+      transactions: {
+        total: cycle.transactions.length,
+        buys: buyTransactions.length,
+        sells: sellTransactions.length,
+        totalInvested,
+        totalReceived,
+      },
+    };
+  }
+
+  /**
+   * Clear all cycles and related data (for testing purposes)
+   */
+  async clearAllCycles() {
+    try {
+      // Delete in correct order due to foreign key constraints
+      await this.prisma.cycleTransaction.deleteMany({});
+      await this.prisma.cycleItem.deleteMany({});
+      await this.prisma.tradingCycle.deleteMany({});
+
+      return {
+        success: true,
+        message: 'All cycles and related data cleared successfully',
+        deletedTables: ['CycleTransaction', 'CycleItem', 'TradingCycle'],
+      };
+    } catch (error) {
+      throw new Error(`Failed to clear cycles: ${error.message}`);
+    }
   }
 }
