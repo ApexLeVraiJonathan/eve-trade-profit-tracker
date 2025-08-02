@@ -240,7 +240,7 @@ export class MarketDataController {
         results.push({
           criteria: test,
           liquidItemCount: liquidItems.length,
-          sampleItems: liquidItems.slice(0, 5),
+          sampleItems: liquidItems.slice(0, 5).map((item) => item.typeId),
         });
       }
 

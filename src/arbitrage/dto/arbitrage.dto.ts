@@ -24,6 +24,11 @@ export interface ArbitrageOpportunityDto {
   // 7. ISK/m³
   iskPerM3: number; // Profit density (ISK per cubic meter)
 
+  // Historical recorded price data from actual trades at destination
+  recordedPriceLow: number; // Lowest recorded trade price in analysis period
+  recordedPriceHigh: number; // Highest recorded trade price in analysis period
+  recordedPriceAverage: number; // Average recorded trade price in analysis period
+
   // DEBUG: Source and destination prices for verification
   buyPrice: number; // Price to buy at source
   sellPrice: number; // Price to sell at destination

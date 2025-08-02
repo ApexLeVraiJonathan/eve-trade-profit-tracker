@@ -1,7 +1,9 @@
 import { Controller, Get, Post, Query, Body, Logger } from '@nestjs/common';
 import { ArbitrageService } from './arbitrage.service';
+import { ArbitrageOpportunity } from './interfaces/arbitrage.interface';
 import {
   ArbitrageOpportunitiesDto,
+  ArbitrageOpportunityDto,
   ArbitrageCalculationDto,
   ArbitrageFiltersDto,
   ArbitrageSummaryDto,
@@ -25,13 +27,49 @@ export class ArbitrageController {
   constructor(private readonly arbitrageService: ArbitrageService) {}
 
   @Get('opportunities')
-  async getArbitrageOpportunities(
+  async getMultiHubArbitrageOpportunities(
     @Query() filtersQuery: ArbitrageQueryParams,
   ): Promise<ArbitrageOpportunitiesDto | ArbitrageErrorDto> {
     try {
-      this.logger.log('Fetching arbitrage opportunities...');
+      // Parse hub parameters with smart defaults
+      const sourceHub =
+        filtersQuery.sourceHub || filtersQuery.fromHub || 'jita';
+      const destinationHubs = filtersQuery.destinationHubs
+        ? filtersQuery.destinationHubs
+            .split(',')
+            .map((h) => h.trim().toLowerCase())
+        : filtersQuery.toHub
+          ? [filtersQuery.toHub.toLowerCase()]
+          : ['amarr', 'dodixie', 'rens', 'hek']; // Default to major trade hubs
 
-      // Parse query parameters into filters
+      this.logger.log(
+        `Fetching multi-hub arbitrage opportunities: ${sourceHub} → [${destinationHubs.join(', ')}]`,
+      );
+
+      // Validate hubs
+      const availableHubs = this.arbitrageService
+        .getAvailableTradingHubs()
+        .map((h) => h.name);
+
+      if (!availableHubs.includes(sourceHub.toLowerCase())) {
+        return {
+          success: false,
+          error: `Invalid source hub: ${sourceHub}. Available hubs: ${availableHubs.join(', ')}`,
+          timestamp: new Date().toISOString(),
+        };
+      }
+
+      for (const hub of destinationHubs) {
+        if (!availableHubs.includes(hub)) {
+          return {
+            success: false,
+            error: `Invalid destination hub: ${hub}. Available hubs: ${availableHubs.join(', ')}`,
+            timestamp: new Date().toISOString(),
+          };
+        }
+      }
+
+      // Parse filters
       const filters: ArbitrageFiltersDto = {
         minProfit: parseOptionalFloat(filtersQuery.minProfit),
         minMarginPercent: parseOptionalFloat(filtersQuery.minMarginPercent),
@@ -42,17 +80,19 @@ export class ArbitrageController {
         limit: parseOptionalInt(filtersQuery.limit) ?? 50,
         sortBy: isValidSortBy(filtersQuery.sortBy)
           ? filtersQuery.sortBy
-          : 'margin', // Changed default to margin
+          : 'margin',
         sortOrder: isValidSortOrder(filtersQuery.sortOrder)
           ? filtersQuery.sortOrder
           : 'desc',
-        // Add hub filtering
-        fromHub: filtersQuery.fromHub,
-        toHub: filtersQuery.toHub,
       };
 
-      const opportunities =
-        await this.arbitrageService.findArbitrageOpportunities(filters);
+      // Call the new multi-hub service method
+      const opportunities: ArbitrageOpportunity[] =
+        await this.arbitrageService.findMultiHubArbitrageOpportunities({
+          sourceHub: sourceHub.toLowerCase(),
+          destinationHubs,
+          filters,
+        });
 
       // Calculate summary using new streamlined format
       const totalPotentialProfit = opportunities.reduce(
@@ -67,25 +107,32 @@ export class ArbitrageController {
           : 0;
 
       // NEW STREAMLINED DTO FORMAT - exactly what user requested
-      const opportunityDtos = opportunities.map((opp) => ({
-        // Core item info
-        itemTypeName: opp.itemTypeName,
+      const opportunityDtos: ArbitrageOpportunityDto[] = opportunities.map(
+        (opp) => ({
+          // Core item info
+          itemTypeName: opp.itemTypeName,
 
-        // Hub routing (solar system names)
-        fromHub: opp.fromHub,
-        toHub: opp.toHub,
+          // Hub routing (solar system names)
+          fromHub: opp.fromHub,
+          toHub: opp.toHub,
 
-        // Key metrics for trading decisions
-        margin: Math.round(opp.margin * 100) / 100, // Round to 2 decimal places
-        possibleProfit: Math.round(opp.possibleProfit),
-        tradesPerWeek: opp.tradesPerWeek,
-        totalAmountTradedPerWeek: opp.totalAmountTradedPerWeek,
-        iskPerM3: Math.round(opp.iskPerM3),
+          // Key metrics for trading decisions
+          margin: Math.round(opp.margin * 100) / 100, // Round to 2 decimal places
+          possibleProfit: Math.round(opp.possibleProfit),
+          tradesPerWeek: opp.tradesPerWeek,
+          totalAmountTradedPerWeek: opp.totalAmountTradedPerWeek,
+          iskPerM3: Math.round(opp.iskPerM3),
 
-        // DEBUG: Source and destination prices for verification
-        buyPrice: opp.details?.costs.buyPrice ?? 0,
-        sellPrice: opp.details?.costs.sellPrice ?? 0,
-      }));
+          // Historical price data from actual trades at destination
+          recordedPriceLow: opp.recordedPriceLow ?? 0,
+          recordedPriceHigh: opp.recordedPriceHigh ?? 0,
+          recordedPriceAverage: opp.recordedPriceAverage ?? 0,
+
+          // DEBUG: Source and destination prices for verification
+          buyPrice: opp.details?.costs.buyPrice ?? 0,
+          sellPrice: opp.details?.costs.sellPrice ?? 0,
+        }),
+      );
 
       // Build applied filters list
       const appliedFilters: string[] = [];
@@ -132,6 +179,42 @@ export class ArbitrageController {
     }
   }
 
+  @Get('hubs')
+  getAvailableTradingHubs(): {
+    success: boolean;
+    data: Array<{
+      name: string;
+      systemName: string;
+      fullStationName: string;
+      stationId: string;
+    }>;
+    message?: string;
+  } {
+    try {
+      const hubs = this.arbitrageService.getAvailableTradingHubs();
+
+      return {
+        success: true,
+        data: hubs.map((hub) => ({
+          name: hub.name,
+          systemName: hub.systemName,
+          fullStationName: hub.fullStationName,
+          stationId: hub.stationId.toString(),
+        })),
+      };
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error('Failed to fetch trading hubs', errorMessage);
+
+      return {
+        success: false,
+        data: [],
+        message: 'Failed to fetch available trading hubs',
+      };
+    }
+  }
+
   @Get('opportunities/route')
   async getRouteArbitrageOpportunities(
     @Query('sourceHub') sourceHub: string,
@@ -143,25 +226,24 @@ export class ArbitrageController {
         `Fetching arbitrage opportunities for route: ${sourceHub} → ${destHub}`,
       );
 
-      // Hub name to station ID mapping
-      const hubToStationId: Record<string, bigint> = {
-        jita: BigInt(60003760), // Jita IV - Moon 4 - Caldari Navy Assembly Plant
-        amarr: BigInt(60008494), // Amarr VIII (Oris) - Emperor Family Academy
-        dodixie: BigInt(60011866), // Dodixie IX - Moon 20 - Federation Navy Assembly Plant
-        rens: BigInt(60004588), // Rens VI - Moon 8 - Brutor Tribe Treasury
-        hek: BigInt(60005686), // Hek VIII - Moon 12 - Boundless Creation Factory
-      };
+      // Get hub information using centralized service
+      const sourceHubInfo = this.arbitrageService.getTradingHub(sourceHub);
+      const destHubInfo = this.arbitrageService.getTradingHub(destHub);
 
-      const sourceStationId = hubToStationId[sourceHub?.toLowerCase()];
-      const destStationId = hubToStationId[destHub?.toLowerCase()];
+      const availableHubs = this.arbitrageService
+        .getAvailableTradingHubs()
+        .map((h) => h.name);
 
-      if (!sourceStationId || !destStationId) {
+      if (!sourceHubInfo || !destHubInfo) {
         return {
           success: false,
-          error: 'Invalid hub names. Use: jita, amarr, dodixie, rens, hek',
+          error: `Invalid hub names. Available hubs: ${availableHubs.join(', ')}`,
           timestamp: new Date().toISOString(),
         };
       }
+
+      const sourceStationId = sourceHubInfo.stationId;
+      const destStationId = destHubInfo.stationId;
 
       // Parse query parameters into filters (NO hub filtering - route is already specific)
       const filters: ArbitrageFiltersDto = {
@@ -218,7 +300,7 @@ export class ArbitrageController {
       return {
         success: true,
         data: {
-          opportunities: opportunityDtos,
+          opportunities: opportunityDtos as ArbitrageOpportunityDto[],
           summary: {
             totalOpportunities: opportunities.length,
             totalPotentialProfit: totalPotentialProfit.toString(),

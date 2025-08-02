@@ -5,6 +5,7 @@ import { ReferenceDataModule } from './reference-data/reference-data.module';
 import { MarketDataModule } from './market-data/market-data.module';
 import { EsiModule } from './esi/esi.module';
 import { ArbitrageModule } from './arbitrage/arbitrage.module';
+import { CycleManagementModule } from './cycle-management/cycle-management.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { ArbitrageModule } from './arbitrage/arbitrage.module';
     MarketDataModule,
     EsiModule,
     ArbitrageModule,
+    CycleManagementModule,
   ],
   controllers: [],
   providers: [],

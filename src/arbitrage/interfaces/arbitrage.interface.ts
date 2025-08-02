@@ -17,6 +17,11 @@ export interface ArbitrageOpportunity {
   totalAmountTradedPerWeek: number; // Total volume traded weekly
   iskPerM3: number; // Profit density (ISK per cubic meter)
 
+  // Historical price data from actual trades at destination
+  recordedPriceLow: number; // Lowest recorded trade price in analysis period
+  recordedPriceHigh: number; // Highest recorded trade price in analysis period
+  recordedPriceAverage: number; // Average recorded trade price in analysis period
+
   // Detailed breakdown (for advanced users)
   details?: {
     itemTypeId: number;
@@ -80,6 +85,52 @@ export interface ArbitrageOpportunity {
   };
 }
 
+export interface CycleOpportunity {
+  itemTypeId: number;
+  itemName: string;
+  buyPrice: number;
+  sellPrice: number;
+  margin: number;
+  profit: number;
+  profitPerM3: number;
+  quantity: number;
+  totalCost: number;
+  totalCargo: number;
+  shipmentsNeeded: number;
+  transportCost: number;
+  netProfitAfterTransport: number;
+  recordedPriceLow: number;
+  recordedPriceHigh: number;
+  recordedPriceAverage: number;
+  liquidity: number; // Days traded per week
+}
+
+export interface CycleAllocationResult {
+  hub: string;
+  capital: number;
+  percentage: number;
+  transportCost: number;
+  maxShipments: number;
+  opportunities: CycleOpportunity[];
+  totalValue: number;
+  totalProfit: number;
+  totalTransportCost: number;
+}
+
+export interface CycleOpportunitiesResponse {
+  cycleId: string;
+  sourceHub: string;
+  totalCapital: number;
+  allocations: Record<string, CycleAllocationResult>;
+  summary: {
+    totalOpportunities: number;
+    totalValue: number;
+    totalProfit: number;
+    totalTransportCost: number;
+    averageMargin: number;
+  };
+}
+
 export interface TaxCalculation {
   salesTax: number; // Default 2.25%, reducible with Accounting skill
   brokerFee: number; // Default 2.25%, reducible with Broker Relations skill
@@ -93,7 +144,6 @@ export interface LogisticsCalculation {
   cargoCapacity: number; // Default 60,000 m³ for freighter
   itemVolume: number; // m³ per unit
   maxUnitsPerTrip: number; // Based on cargo capacity
-  optimalQuantity: number; // Based on market depth and capital
   shipmentsRequired: number;
   wastedSpace: number; // Unused cargo space in m³
   efficiency: number; // Percentage of cargo space utilized
@@ -141,4 +191,22 @@ export interface ArbitrageSummary {
     opportunities: number;
     avgProfitPerM3: number;
   }>;
+}
+
+export interface TradingHub {
+  name: string;
+  stationId: bigint;
+  systemName: string;
+  fullStationName: string;
+}
+
+export interface MultiHubArbitrageParams {
+  sourceHub: string;
+  destinationHubs: string[];
+  filters?: ArbitrageFilters;
+}
+
+export interface TradingMetrics {
+  tradesPerWeek: number;
+  totalAmountTradedPerWeek: number;
 }

@@ -8,6 +8,9 @@ import {
   LogisticsCalculation,
   ArbitrageFilters,
   ArbitrageSummary,
+  TradingHub,
+  MultiHubArbitrageParams,
+  TradingMetrics,
 } from './interfaces/arbitrage.interface';
 import {
   MarketPrice,
@@ -29,6 +32,40 @@ export class ArbitrageService {
   // Default freighter cargo capacity
   private readonly defaultCargoCapacity = 60000; // m³
 
+  // Centralized trading hub mapping
+  private readonly TRADING_HUBS: Record<string, TradingHub> = {
+    jita: {
+      name: 'jita',
+      stationId: BigInt(60003760),
+      systemName: 'Jita',
+      fullStationName: 'Jita IV - Moon 4 - Caldari Navy Assembly Plant',
+    },
+    amarr: {
+      name: 'amarr',
+      stationId: BigInt(60008494),
+      systemName: 'Amarr',
+      fullStationName: 'Amarr VIII (Oris) - Emperor Family Academy',
+    },
+    dodixie: {
+      name: 'dodixie',
+      stationId: BigInt(60011866),
+      systemName: 'Dodixie',
+      fullStationName: 'Dodixie IX - Moon 20 - Federation Navy Assembly Plant',
+    },
+    rens: {
+      name: 'rens',
+      stationId: BigInt(60004588),
+      systemName: 'Rens',
+      fullStationName: 'Rens VI - Moon 8 - Brutor Tribe Treasury',
+    },
+    hek: {
+      name: 'hek',
+      stationId: BigInt(60005686),
+      systemName: 'Hek',
+      fullStationName: 'Hek VIII - Moon 12 - Boundless Creation Factory',
+    },
+  };
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly esiService: EsiService,
@@ -36,9 +73,150 @@ export class ArbitrageService {
   ) {}
 
   /**
-   * Find all current arbitrage opportunities
+   * Find arbitrage opportunities across multiple trading hubs
+   * Uses concurrent liquidity analysis and only processes liquid items
    */
-  async findArbitrageOpportunities(
+  async findMultiHubArbitrageOpportunities(
+    params: MultiHubArbitrageParams,
+  ): Promise<ArbitrageOpportunity[]> {
+    const { sourceHub, destinationHubs, filters } = params;
+
+    this.logger.log(
+      `Starting multi-hub arbitrage analysis: ${sourceHub} → [${destinationHubs.join(', ')}]`,
+    );
+
+    // Validate source hub
+    const sourceHubInfo = this.TRADING_HUBS[sourceHub.toLowerCase()];
+    if (!sourceHubInfo) {
+      throw new Error(
+        `Invalid source hub: ${sourceHub}. Valid hubs: ${Object.keys(this.TRADING_HUBS).join(', ')}`,
+      );
+    }
+
+    // Validate and get destination hub info
+    const destinationHubInfos = destinationHubs.map((hub) => {
+      const hubInfo = this.TRADING_HUBS[hub.toLowerCase()];
+      if (!hubInfo) {
+        throw new Error(
+          `Invalid destination hub: ${hub}. Valid hubs: ${Object.keys(this.TRADING_HUBS).join(', ')}`,
+        );
+      }
+      return hubInfo;
+    });
+
+    // Step 1: Concurrent liquidity analysis across all destination hubs
+    this.logger.log(
+      `Analyzing liquidity at ${destinationHubInfos.length} destination hubs concurrently...`,
+    );
+    const destinationStationIds = destinationHubInfos.map(
+      (hub) => hub.stationId,
+    );
+
+    const liquidityMap =
+      await this.liquidityAnalyzer.getMultiDestinationLiquidity(
+        destinationStationIds,
+        {
+          minDaysPerWeek: 4, // 4+ days per week traded (nearly daily)
+          minValue: 10000000, // 10M ISK minimum average trade value (higher quality)
+        },
+      );
+
+    this.logger.log(`Liquidity analysis complete. Processing routes...`);
+
+    // Step 2: Process each destination hub that has liquid items
+    const allOpportunities: ArbitrageOpportunity[] = [];
+
+    for (const destinationHub of destinationHubInfos) {
+      const liquidItemsData = liquidityMap.get(
+        destinationHub.stationId.toString(),
+      );
+
+      if (!liquidItemsData || liquidItemsData.length === 0) {
+        this.logger.log(
+          `No liquid items found at ${destinationHub.systemName}, skipping...`,
+        );
+        continue;
+      }
+
+      this.logger.log(
+        `Processing ${liquidItemsData.length} liquid items for route: ${sourceHub} → ${destinationHub.systemName}`,
+      );
+
+      // Extract type IDs for ESI calls and create price data map
+      const liquidItemIds = liquidItemsData.map((item) => item.typeId);
+      const priceDataMap = new Map(
+        liquidItemsData.map((item) => [item.typeId, item.priceData]),
+      );
+
+      // Get market prices for this specific route
+      const rawMarketPrices = await this.esiService.fetchMarketPricesForRoute(
+        sourceHubInfo.stationId,
+        destinationHub.stationId,
+        liquidItemIds,
+      );
+
+      // Convert to internal format and analyze
+      const marketPrices: MarketPrice[] = rawMarketPrices.map(
+        convertEsiToMarketPrice,
+      );
+      const pricesByItem = this.groupPricesByItem(marketPrices);
+
+      // Pre-fetch item type data
+      const uniqueItemTypeIds = Array.from(pricesByItem.keys()).map((id) =>
+        parseInt(id),
+      );
+      const itemTypes = await this.prisma.itemType.findMany({
+        where: { id: { in: uniqueItemTypeIds } },
+        select: { id: true, name: true, volume: true },
+      });
+      const itemTypeMap = new Map(itemTypes.map((item) => [item.id, item]));
+
+      // Analyze each item for this route
+      for (const [itemTypeId, prices] of pricesByItem) {
+        const itemOpportunities = await this.analyzeItemArbitrage(
+          parseInt(itemTypeId),
+          prices,
+          filters,
+          itemTypeMap,
+          priceDataMap.get(parseInt(itemTypeId)),
+        );
+        allOpportunities.push(...itemOpportunities);
+      }
+    }
+
+    this.logger.log(
+      `Found ${allOpportunities.length} total arbitrage opportunities across all routes`,
+    );
+
+    // Apply filters and sorting
+    const filteredOpportunities = this.applyFilters(allOpportunities, filters);
+    const sortedOpportunities = this.sortOpportunities(
+      filteredOpportunities,
+      filters,
+    );
+
+    return sortedOpportunities;
+  }
+
+  /**
+   * Get list of available trading hubs
+   */
+  getAvailableTradingHubs(): TradingHub[] {
+    return Object.values(this.TRADING_HUBS);
+  }
+
+  /**
+   * Get trading hub by name (case-insensitive)
+   */
+  getTradingHub(hubName: string): TradingHub | undefined {
+    return this.TRADING_HUBS[hubName.toLowerCase()];
+  }
+
+  /**
+   * Legacy method: Find all current arbitrage opportunities (less efficient)
+   * @deprecated Use findMultiHubArbitrageOpportunities instead
+   */
+  async findArbitrageOpportunitiesLegacy(
     filters?: ArbitrageFilters,
   ): Promise<ArbitrageOpportunity[]> {
     this.logger.log('Starting arbitrage opportunity analysis...');
@@ -188,7 +366,7 @@ export class ArbitrageService {
   async getArbitrageSummary(
     filters?: ArbitrageFilters,
   ): Promise<ArbitrageSummary> {
-    const opportunities = await this.findArbitrageOpportunities(filters);
+    const opportunities = await this.findArbitrageOpportunitiesLegacy(filters);
 
     const totalPotentialProfit = opportunities.reduce(
       (sum, opp) => sum + opp.possibleProfit,
@@ -261,6 +439,7 @@ export class ArbitrageService {
       number,
       { id: number; name: string; volume: number | null }
     >,
+    priceData?: { high: number; low: number; average: number },
   ): Promise<ArbitrageOpportunity[]> {
     const opportunities: ArbitrageOpportunity[] = [];
 
@@ -406,6 +585,7 @@ export class ArbitrageService {
           competitiveDestOrder,
           itemType,
           Math.min(bestSourceOrder.volume, competitiveDestOrder.volume),
+          priceData,
         );
 
         // DEBUG: Log opportunity calculation result for ALL items
@@ -448,6 +628,7 @@ export class ArbitrageService {
     destinationSellOrder: MarketPrice,
     itemType: ItemTypeInfo,
     quantity: number,
+    priceData?: { high: number; low: number; average: number },
   ): Promise<ArbitrageOpportunity | null> {
     try {
       // Get station information
@@ -519,6 +700,11 @@ export class ArbitrageService {
         tradesPerWeek: tradingMetrics.tradesPerWeek,
         totalAmountTradedPerWeek: tradingMetrics.totalAmountTradedPerWeek,
         iskPerM3: profitPerM3, // Profit density (ISK per cubic meter)
+
+        // Historical price data from actual trades at destination
+        recordedPriceLow: priceData?.low ?? 0,
+        recordedPriceHigh: priceData?.high ?? 0,
+        recordedPriceAverage: priceData?.average ?? 0,
 
         // Detailed breakdown (for advanced users)
         details: {
@@ -661,6 +847,11 @@ export class ArbitrageService {
         totalAmountTradedPerWeek: tradingMetrics.totalAmountTradedPerWeek,
         iskPerM3: profitPerM3, // Profit density (ISK per cubic meter)
 
+        // Historical price data from actual trades at destination (TODO: implement proper fetching)
+        recordedPriceLow: 0, // TODO: Get from destination trading data
+        recordedPriceHigh: 0, // TODO: Get from destination trading data
+        recordedPriceAverage: 0, // TODO: Get from destination trading data
+
         // Detailed breakdown (for advanced users)
         details: {
           itemTypeId: Number(itemType.id), // Convert BigInt to number for JSON serialization
@@ -778,7 +969,6 @@ export class ArbitrageService {
       cargoCapacity,
       itemVolume,
       maxUnitsPerTrip,
-      optimalQuantity: quantity,
       shipmentsRequired,
       wastedSpace,
       efficiency,
@@ -819,10 +1009,7 @@ export class ArbitrageService {
   /**
    * Get trading metrics from historical data (trades per week, volume per week)
    */
-  private async getTradingMetrics(itemTypeId: number): Promise<{
-    tradesPerWeek: number;
-    totalAmountTradedPerWeek: number;
-  }> {
+  private async getTradingMetrics(itemTypeId: number): Promise<TradingMetrics> {
     const oneWeekAgo = new Date();
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
 
@@ -1091,8 +1278,8 @@ export class ArbitrageService {
       return [];
     }
 
-    // Extract type IDs for ESI calls (temporarily revert to old format)
-    const liquidItemIds = liquidItems; // Already an array of type IDs
+    // Extract type IDs for ESI calls
+    const liquidItemIds = liquidItems.map((item) => item.typeId);
 
     // Get market prices for this specific route
     this.logger.log(

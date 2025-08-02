@@ -11,9 +11,13 @@ export interface ArbitrageQueryParams {
   sortBy?: string;
   sortOrder?: string;
 
-  // Hub filtering (solar system names)
-  fromHub?: string; // Source hub filter (e.g., "Jita")
-  toHub?: string; // Destination hub filter (e.g., "Amarr")
+  // Multi-hub arbitrage parameters
+  sourceHub?: string; // Source trading hub (e.g., "jita")
+  destinationHubs?: string; // Comma-separated destination hubs (e.g., "amarr,dodixie,rens")
+
+  // Legacy hub filtering (for backward compatibility)
+  fromHub?: string; // Legacy: Source hub filter
+  toHub?: string; // Legacy: Destination hub filter
 }
 
 export interface ArbitrageSummaryQueryParams {

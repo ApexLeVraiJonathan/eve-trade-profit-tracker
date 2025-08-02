@@ -1,7 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { TrackedStationService } from './tracked-station.service';
-import { LiquidityCriteria } from './interfaces/liquidity.interface';
+import {
+  LiquidityCriteria,
+  LiquidItemData,
+} from './interfaces/liquidity.interface';
 
 @Injectable()
 export class LiquidityAnalyzerService {
@@ -65,7 +68,7 @@ export class LiquidityAnalyzerService {
   async getDestinationLiquidity(
     destStationId: bigint,
     criteria: LiquidityCriteria = {},
-  ): Promise<number[]> {
+  ): Promise<LiquidItemData[]> {
     this.logger.log(
       `Finding liquid items at destination station ${destStationId} (days-per-week logic)...`,
     );
@@ -115,12 +118,19 @@ export class LiquidityAnalyzerService {
         typeId: true,
         scanDate: true,
         iskValue: true,
+        high: true,
+        low: true,
+        avg: true,
       },
     });
 
     // Group by typeId and count distinct trading days
     const itemTradingDays = new Map<string, Set<string>>();
     const itemValues = new Map<string, number[]>();
+    const itemPrices = new Map<
+      string,
+      { highs: number[]; lows: number[]; avgs: number[] }
+    >();
 
     for (const trade of tradesInWindow) {
       const typeIdStr = trade.typeId.toString();
@@ -137,10 +147,19 @@ export class LiquidityAnalyzerService {
         itemValues.set(typeIdStr, []);
       }
       itemValues.get(typeIdStr)!.push(Number(trade.iskValue));
+
+      // Track price data (high, low, avg from each trade record)
+      if (!itemPrices.has(typeIdStr)) {
+        itemPrices.set(typeIdStr, { highs: [], lows: [], avgs: [] });
+      }
+      const priceData = itemPrices.get(typeIdStr)!;
+      priceData.highs.push(Number(trade.high));
+      priceData.lows.push(Number(trade.low));
+      priceData.avgs.push(Number(trade.avg));
     }
 
     // Filter items based on days per week and value criteria
-    const liquidItems: number[] = [];
+    const liquidItems: LiquidItemData[] = [];
 
     for (const [typeIdStr, tradingDays] of itemTradingDays) {
       const daysCount = tradingDays.size;
@@ -155,7 +174,29 @@ export class LiquidityAnalyzerService {
       const passes = passedDays && passedValue;
 
       if (passes) {
-        liquidItems.push(Number(typeIdStr));
+        // Calculate price statistics from the collected price data
+        const priceData = itemPrices.get(typeIdStr);
+        const priceStats = priceData
+          ? {
+              high: Math.max(...priceData.highs),
+              low: Math.min(...priceData.lows),
+              average:
+                priceData.avgs.reduce((a, b) => a + b, 0) /
+                priceData.avgs.length,
+            }
+          : {
+              high: 0,
+              low: 0,
+              average: 0,
+            };
+
+        liquidItems.push({
+          typeId: Number(typeIdStr),
+          daysTraded: daysCount,
+          totalValue: values.reduce((a, b) => a + b, 0),
+          avgValue: avgValue,
+          priceData: priceStats,
+        });
       }
 
       this.logger.debug(
@@ -172,12 +213,12 @@ export class LiquidityAnalyzerService {
 
   /**
    * Get liquid items at multiple specific destinations (concurrent analysis)
-   * Returns a map of stationId -> liquid item IDs for each destination
+   * Returns a map of stationId -> liquid item data for each destination
    */
   async getMultiDestinationLiquidity(
     stationIds: bigint[],
     criteria: LiquidityCriteria = {},
-  ): Promise<Map<string, number[]>> {
+  ): Promise<Map<string, LiquidItemData[]>> {
     this.logger.log(
       `Analyzing liquidity at ${stationIds.length} specific stations concurrently...`,
     );
@@ -201,11 +242,12 @@ export class LiquidityAnalyzerService {
     );
 
     // Build result map: station ID -> liquid items
-    const resultMap = new Map<string, number[]>();
+    const resultMap = new Map<string, LiquidItemData[]>();
 
     stationResults.forEach((result) => {
       if (result.status === 'fulfilled') {
         const { stationId, liquidItems } = result.value;
+        // Return full liquid item data for price analysis
         resultMap.set(stationId, liquidItems);
       }
     });

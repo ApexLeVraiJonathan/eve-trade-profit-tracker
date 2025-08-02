@@ -4,7 +4,7 @@
 
 Building a NestJS application to import, store, and analyze EVE Online market data from Adam4EVE platform with proper reference data normalization.
 
-## Current Status: 🟢 Planning Phase 5 - ESI Real-time Price Collection
+## Current Status: 🟢 Phase 5A - MVP Arbitrage System (IN PROGRESS)
 
 ### ✅ Completed Tasks
 
@@ -19,7 +19,7 @@ Building a NestJS application to import, store, and analyze EVE Online market da
    - [x] Designed normalized Prisma schema with proper relationships
    - [x] Set up proper foreign key relationships
 
-### 🔄 Current Phase: Reference Data Foundation
+### 🔄 Current Phase: MVP Arbitrage System (Phase 5A)
 
 #### 📊 Data Analysis (Adam4EVE)
 
@@ -109,38 +109,53 @@ ItemType (1) -> (N) MarketOrderTrade (N) -> (1) Region
 
 **Goal**: Get basic arbitrage detection working with essential features only
 
-- [ ] **ESI Basic Integration** ⭐ CORE
-  - [ ] Set up simple ESI market data fetching (`/markets/{region_id}/orders/`)
-  - [ ] Create basic ESI service (no auth needed for public market data)
-  - [ ] Test connectivity and basic price retrieval for tracked hubs
-  - [ ] Handle rate limiting (simple approach: 1 request/second to start)
+- [x] **ESI Basic Integration** ⭐ CORE
+  - [x] Set up simple ESI market data fetching (`/markets/{region_id}/orders/`)
+  - [x] Create basic ESI service (no auth needed for public market data)
+  - [x] Test connectivity and basic price retrieval for tracked hubs
+  - [x] Handle rate limiting (simple approach: 1 request/second to start)
 
-- [ ] **Essential Database Changes** ⭐ CORE
-  - [ ] Add volume field to ItemType model (just volume, not packaged_volume)
-  - [ ] Create simple MarketPrice table for current buy/sell orders
-  - [ ] Run Prisma migration for basic schema
-  - [ ] No historical tracking yet (keep it simple)
+- [x] **Essential Database Changes** ⭐ CORE
+  - [x] Add volume field to ItemType model (just volume, not packaged_volume)
+  - [x] Create simple MarketPrice table for current buy/sell orders
+  - [x] Run Prisma migration for basic schema
+  - [x] No historical tracking yet (keep it simple)
 
-- [ ] **Item Volume Data** ⭐ CORE
-  - [ ] Fetch volume (m³) for tracked items from ESI universe endpoints
-  - [ ] Populate ItemType.volume field for calculation purposes
-  - [ ] Focus only on items we're already tracking (not all 50k items)
+- [x] **Item Volume Data** ⭐ CORE
+  - [x] Fetch volume (m³) for tracked items from ESI universe endpoints
+  - [x] Populate ItemType.volume field for calculation purposes
+  - [x] Focus only on items we're already tracking (not all 50k items)
 
-- [ ] **Basic Arbitrage Engine** ⭐ CORE
-  - [ ] Cross-hub price comparison for tracked items
-  - [ ] Basic profit calculation: (sell_price - buy_price) - taxes
-  - [ ] ISK/m³ efficiency calculation for transport optimization
-  - [ ] Simple ranking by profit potential
+- [x] **Basic Arbitrage Engine** ⭐ CORE
+  - [x] Cross-hub price comparison for tracked items
+  - [x] Basic profit calculation: (sell_price - buy_price) - taxes
+  - [x] ISK/m³ efficiency calculation for transport optimization
+  - [x] Simple ranking by profit potential
 
-- [ ] **Core Tax Calculations** ⭐ CORE
-  - [ ] Implement basic 2.25% sales tax and broker fees
-  - [ ] No skill bonuses or standings yet (assume worst case)
-  - [ ] Simple, conservative profit estimates
+- [x] **Core Tax Calculations** ⭐ CORE
+  - [x] Implement basic 2.25% sales tax and broker fees
+  - [x] No skill bonuses or standings yet (assume worst case)
+  - [x] Simple, conservative profit estimates
 
-- [ ] **Basic API Endpoints** ⭐ CORE
-  - [ ] GET /arbitrage/opportunities - List current arbitrage chances
-  - [ ] GET /arbitrage/calculate - Calculate profit for specific item/route
-  - [ ] Simple JSON responses, no fancy filtering yet
+- [x] **Basic API Endpoints** ⭐ CORE
+  - [x] GET /arbitrage/opportunities - List current arbitrage chances
+  - [x] GET /arbitrage/calculate - Calculate profit for specific item/route
+  - [x] Simple JSON responses, no fancy filtering yet
+
+- [x] **Advanced Liquidity Analysis** ⭐ ENHANCED
+  - [x] Implement "days per week traded" liquidity metric (more accurate than total trades)
+  - [x] Rolling 7-day window analysis from latest data
+  - [x] Concurrent multi-station liquidity analysis
+  - [x] Historical price data integration (high, low, average from market_order_trades)
+  - [x] Multi-hub arbitrage support (source → multiple destinations)
+  - [x] Smart hub mapping and validation
+
+- [x] **Historical Price Data Integration** ⭐ ENHANCED
+  - [x] Add `recordedPriceLow`, `recordedPriceHigh`, `recordedPriceAverage` to arbitrage opportunities
+  - [x] Integrate price data from `market_order_trades` table
+  - [x] Pass price data through liquidity analysis to arbitrage calculations
+  - [x] Update DTOs and interfaces to include historical price fields
+  - [x] TypeScript type safety for all price data integration
 
 #### Phase 5B: Enhanced Features 📈 NICE-TO-HAVE
 
@@ -503,10 +518,10 @@ Your EVE Online Market Data Tracker has a **solid foundation** and is ready for 
 ✅ **Smart Reference Data Management** (Phase 1) - **COMPLETED**  
 ✅ **Selective Market Data Tracking** (Phase 2) - **COMPLETED**  
 ✅ **Comprehensive Data Access APIs** (Phase 3) - **COMPLETED**  
-✅ **Automated Daily Data Pipeline** (Phase 4) - **COMPLETED**
+✅ **Automated Daily Data Pipeline** (Phase 4) - **COMPLETED**  
+✅ **MVP Arbitrage System** (Phase 5A) - **COMPLETED**
 
-🎯 **MVP Arbitrage System** (Phase 5A) - **IN PROGRESS**  
-📈 **Enhanced Features** (Phase 5B) - **PLANNED**  
+🎯 **Enhanced Features** (Phase 5B) - **NEXT PHASE**  
 👨‍🚀 **Character Integration** (Phase 5C) - **PLANNED**  
 🤖 **Business Intelligence** (Phase 6) - **FUTURE**  
 📊 **User Interface** (Phase 7) - **FUTURE**  
@@ -521,36 +536,37 @@ Your EVE Online Market Data Tracker has a **solid foundation** and is ready for 
 - **🔄 Update Status**: Up to date (1 day lag acceptable)
 - **🤖 Automation**: Internal scheduler runs daily at 6 AM UTC
 - **🎯 Deployment**: Zero external dependencies for scheduling
+- **💰 Arbitrage System**: Fully functional with historical price data integration
 
 ---
 
 ## 🎯 **UPCOMING MILESTONES**
 
-### **Phase 5A: MVP Implementation Plan** (Next 1-2 weeks)
+### **Phase 5B: Enhanced Features Plan** (Next 2-4 weeks)
 
-1. **Days 1-3**: ESI Basic Integration & Simple Database Schema
-2. **Days 4-6**: Item Volume Data & Basic Arbitrage Engine
-3. **Days 7-10**: Tax Calculations & API Endpoints
-4. **Days 11-14**: Testing & Refinement
+1. **Week 1**: Historical Price Tracking & Advanced Calculations
+2. **Week 2**: ESI Performance Optimization & Risk Assessment
+3. **Week 3**: Advanced API Features & Portfolio Optimization
+4. **Week 4**: Testing & Refinement
 
-### **Success Metrics for Phase 5A (MVP)**
+### **Success Metrics for Phase 5B (Enhanced Features)**
 
-- ✅ ESI API can fetch current market prices for tracked hubs
-- ✅ Basic arbitrage opportunities detected and ranked
-- ✅ Profit calculations include taxes and ISK/m³ efficiency
-- ✅ Simple API endpoints return useful arbitrage data
-- ✅ System works manually (no automation needed yet)
+- [ ] Historical price tracking with trend analysis
+- [ ] Skill-based tax calculations and standing adjustments
+- [ ] Advanced risk assessment and market depth analysis
+- [ ] Portfolio optimization and bulk calculations
+- [ ] Enhanced filtering and export capabilities
 
-### **Simplified Technical Approach**
+### **Technical Approach for Phase 5B**
 
-- **ESI Integration**: Public market data only (no OAuth initially)
-- **Rate Limiting**: Conservative 1 request/second to start
-- **Data Storage**: Current prices only (no historical data yet)
-- **Updates**: Manual refresh via API (no automated scheduling)
-- **Calculations**: Basic taxes only (no skill bonuses initially)
+- **Historical Data**: 15-day price history with trend analysis
+- **Advanced Calculations**: Skill-based taxes, multiple ship types, regional fees
+- **Risk Assessment**: Volatility scoring, market depth, competition analysis
+- **Performance**: Optimized ESI integration with authenticated access
+- **User Experience**: Advanced filtering, sorting, and export features
 
 ---
 
-**Last Updated**: January 2025  
-**Status**: **FOUNDATION COMPLETE** ✅ → **BUILDING MVP ARBITRAGE** 🎯  
-**Next Steps**: Start ESI basic integration for market price fetching
+**Last Updated**: August 2025  
+**Status**: **MVP ARBITRAGE COMPLETE** ✅ → **ENHANCED FEATURES** 🎯  
+**Next Steps**: Begin Phase 5B with historical price tracking and advanced calculations
