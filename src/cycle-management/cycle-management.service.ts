@@ -6,6 +6,9 @@ import {
   CycleAllocationResult,
   CycleOpportunity,
   CycleFilters,
+  PackingResult,
+  PackedItem,
+  AlgorithmComparison,
 } from './interfaces/cycle.interface';
 
 @Injectable()
@@ -329,5 +332,448 @@ export class CycleManagementService {
     }
 
     return shipmentItems;
+  }
+
+  /**
+   * ALGORITHM COMPETITION: Compare different packing strategies
+   */
+  async comparePackingAlgorithms(
+    opportunities: ArbitrageOpportunity[],
+    budget: number,
+    transportCost: number,
+    cargoCapacity: number = 60000,
+  ): Promise<{
+    greedy_current: PackingResult;
+    dynamic_optimal: PackingResult;
+    hybrid_smart: PackingResult;
+    winner: string;
+    comparison: AlgorithmComparison;
+  }> {
+    this.logger.log(
+      `🏁 ALGORITHM COMPETITION START - Budget: ${budget.toLocaleString()} ISK`,
+    );
+
+    // Run all three algorithms
+    const [greedyResult, dynamicResult, hybridResult] = await Promise.all([
+      this.packGreedyCurrent(
+        opportunities,
+        budget,
+        transportCost,
+        cargoCapacity,
+      ),
+      this.packDynamicOptimal(
+        opportunities,
+        budget,
+        transportCost,
+        cargoCapacity,
+      ),
+      this.packHybridSmart(opportunities, budget, transportCost, cargoCapacity),
+    ]);
+
+    // Determine winner based on profit-to-time ratio
+    const algorithms = {
+      greedy_current: greedyResult,
+      dynamic_optimal: dynamicResult,
+      hybrid_smart: hybridResult,
+    };
+
+    let winner = 'greedy_current';
+    let bestScore =
+      greedyResult.totalProfit / Math.max(greedyResult.executionTimeMs, 1);
+
+    Object.entries(algorithms).forEach(([name, result]) => {
+      const score = result.totalProfit / Math.max(result.executionTimeMs, 1);
+      if (score > bestScore) {
+        bestScore = score;
+        winner = name;
+      }
+    });
+
+    return {
+      ...algorithms,
+      winner,
+      comparison: this.createComparison(algorithms),
+    };
+  }
+
+  /**
+   * ALGORITHM 1: Current Greedy (Profit per m³ sorting)
+   */
+  private async packGreedyCurrent(
+    opportunities: ArbitrageOpportunity[],
+    budget: number,
+    transportCost: number,
+    cargoCapacity: number,
+  ): Promise<PackingResult> {
+    const startTime = performance.now();
+
+    const items: PackedItem[] = [];
+    let remainingBudget = budget - transportCost;
+    let remainingCargo = cargoCapacity;
+
+    // Sort by profit per m³ (current algorithm)
+    const sortedOpps = opportunities
+      .filter((opp) => {
+        const buyPrice = opp.details?.costs.buyPrice || 0;
+        const volume = opp.details?.volume || 1;
+        return buyPrice > 0 && volume > 0 && opp.totalAmountTradedPerWeek > 0;
+      })
+      .sort((a, b) => b.iskPerM3 - a.iskPerM3);
+
+    for (const opp of sortedOpps) {
+      const buyPrice = opp.details?.costs.buyPrice || 0;
+      const sellPrice = opp.details?.costs.sellPrice || 0;
+      const itemVolume = opp.details?.volume || 1;
+
+      const safeQuantity = Math.max(
+        1,
+        Math.floor(opp.totalAmountTradedPerWeek * 0.5),
+      );
+      const maxAffordable = Math.floor(remainingBudget / buyPrice);
+      const maxByVolume = Math.floor(remainingCargo / itemVolume);
+      const finalQuantity = Math.min(safeQuantity, maxAffordable, maxByVolume);
+
+      if (finalQuantity <= 0) continue;
+
+      const totalCost = finalQuantity * buyPrice;
+      const totalCargo = finalQuantity * itemVolume;
+      const profit = finalQuantity * (sellPrice - buyPrice) * (1 - 0.045);
+
+      if (
+        profit > 0 &&
+        totalCargo <= remainingCargo &&
+        totalCost <= remainingBudget
+      ) {
+        items.push({
+          itemTypeId: opp.itemTypeId,
+          itemName: opp.itemTypeName,
+          quantity: finalQuantity,
+          totalCost,
+          totalCargo,
+          profit,
+          profitPerM3: profit / totalCargo,
+        });
+
+        remainingBudget -= totalCost;
+        remainingCargo -= totalCargo;
+      }
+    }
+
+    const endTime = performance.now();
+    const totalProfit = items.reduce((sum, item) => sum + item.profit, 0);
+    const totalCargo = items.reduce((sum, item) => sum + item.totalCargo, 0);
+
+    return {
+      items,
+      totalProfit,
+      cargoUtilization: (totalCargo / cargoCapacity) * 100,
+      totalItems: items.length,
+      executionTimeMs: endTime - startTime,
+      algorithm: 'Greedy (Profit/m³)',
+    };
+  }
+
+  /**
+   * ALGORITHM 2: Dynamic Programming (Optimal Knapsack)
+   */
+  private async packDynamicOptimal(
+    opportunities: ArbitrageOpportunity[],
+    budget: number,
+    transportCost: number,
+    cargoCapacity: number,
+  ): Promise<PackingResult> {
+    const startTime = performance.now();
+    const MAX_EXECUTION_TIME = 5000; // 5 second timeout
+
+    let bestCombination: PackedItem[] = [];
+    let bestProfit = 0;
+
+    // Prepare items for DP
+    const viableItems = opportunities
+      .filter((opp) => {
+        const buyPrice = opp.details?.costs.buyPrice || 0;
+        return buyPrice > 0 && opp.totalAmountTradedPerWeek > 0;
+      })
+      .slice(0, 50) // Limit to prevent explosion
+      .map((opp) => {
+        const buyPrice = opp.details?.costs.buyPrice || 0;
+        const sellPrice = opp.details?.costs.sellPrice || 0;
+        const itemVolume = opp.details?.volume || 1;
+        const safeQuantity = Math.max(
+          1,
+          Math.floor(opp.totalAmountTradedPerWeek * 0.5),
+        );
+
+        return {
+          opp,
+          buyPrice,
+          sellPrice,
+          itemVolume,
+          maxQuantity: Math.min(
+            safeQuantity,
+            Math.floor((budget - transportCost) / buyPrice),
+          ),
+          profitPerUnit: (sellPrice - buyPrice) * (1 - 0.045),
+        };
+      })
+      .filter((item) => item.maxQuantity > 0 && item.profitPerUnit > 0);
+
+    // Simplified DP with branch and bound
+    const searchCombinations = (
+      index: number,
+      currentBudget: number,
+      currentCargo: number,
+      currentItems: PackedItem[],
+      currentProfit: number,
+    ) => {
+      // Timeout check
+      if (performance.now() - startTime > MAX_EXECUTION_TIME) {
+        return;
+      }
+
+      // Update best if current is better
+      if (currentProfit > bestProfit) {
+        bestProfit = currentProfit;
+        bestCombination = [...currentItems];
+      }
+
+      // Base case or pruning
+      if (
+        index >= viableItems.length ||
+        currentBudget <= 0 ||
+        currentCargo <= 0
+      ) {
+        return;
+      }
+
+      const item = viableItems[index];
+
+      // Try different quantities for this item
+      for (let qty = 0; qty <= item.maxQuantity; qty++) {
+        const cost = qty * item.buyPrice;
+        const cargo = qty * item.itemVolume;
+        const profit = qty * item.profitPerUnit;
+
+        if (cost <= currentBudget && cargo <= currentCargo) {
+          const newItems =
+            qty > 0
+              ? [
+                  ...currentItems,
+                  {
+                    itemTypeId: item.opp.itemTypeId,
+                    itemName: item.opp.itemTypeName,
+                    quantity: qty,
+                    totalCost: cost,
+                    totalCargo: cargo,
+                    profit,
+                    profitPerM3: profit / cargo,
+                  },
+                ]
+              : currentItems;
+
+          searchCombinations(
+            index + 1,
+            currentBudget - cost,
+            currentCargo - cargo,
+            newItems,
+            currentProfit + profit,
+          );
+        }
+      }
+    };
+
+    searchCombinations(0, budget - transportCost, cargoCapacity, [], 0);
+
+    const endTime = performance.now();
+    const totalCargo = bestCombination.reduce(
+      (sum, item) => sum + item.totalCargo,
+      0,
+    );
+
+    return {
+      items: bestCombination,
+      totalProfit: bestProfit,
+      cargoUtilization: (totalCargo / cargoCapacity) * 100,
+      totalItems: bestCombination.length,
+      executionTimeMs: endTime - startTime,
+      algorithm: 'Dynamic Programming (Optimal)',
+    };
+  }
+
+  /**
+   * ALGORITHM 3: Hybrid Smart (80% efficient items + 20% highest profit items)
+   */
+  private async packHybridSmart(
+    opportunities: ArbitrageOpportunity[],
+    budget: number,
+    transportCost: number,
+    cargoCapacity: number,
+  ): Promise<PackingResult> {
+    const startTime = performance.now();
+
+    const items: PackedItem[] = [];
+    let remainingBudget = budget - transportCost;
+    let remainingCargo = cargoCapacity;
+
+    const viableOpps = opportunities.filter((opp) => {
+      const buyPrice = opp.details?.costs.buyPrice || 0;
+      const volume = opp.details?.volume || 1;
+      return buyPrice > 0 && volume > 0 && opp.totalAmountTradedPerWeek > 0;
+    });
+
+    // Phase 1: Fill 80% of space with highest profit/m³ items
+    const efficiencyTarget = cargoCapacity * 0.8;
+    const efficiencyOpps = [...viableOpps].sort(
+      (a, b) => b.iskPerM3 - a.iskPerM3,
+    );
+
+    for (const opp of efficiencyOpps) {
+      if (remainingCargo <= cargoCapacity * 0.2) break; // Leave 20% for phase 2
+
+      const buyPrice = opp.details?.costs.buyPrice || 0;
+      const sellPrice = opp.details?.costs.sellPrice || 0;
+      const itemVolume = opp.details?.volume || 1;
+
+      const safeQuantity = Math.max(
+        1,
+        Math.floor(opp.totalAmountTradedPerWeek * 0.5),
+      );
+      const maxAffordable = Math.floor(remainingBudget / buyPrice);
+      const maxByVolume = Math.floor(remainingCargo / itemVolume);
+      const finalQuantity = Math.min(safeQuantity, maxAffordable, maxByVolume);
+
+      if (finalQuantity <= 0) continue;
+
+      const totalCost = finalQuantity * buyPrice;
+      const totalCargo = finalQuantity * itemVolume;
+      const profit = finalQuantity * (sellPrice - buyPrice) * (1 - 0.045);
+
+      if (profit > 0) {
+        items.push({
+          itemTypeId: opp.itemTypeId,
+          itemName: opp.itemTypeName,
+          quantity: finalQuantity,
+          totalCost,
+          totalCargo,
+          profit,
+          profitPerM3: profit / totalCargo,
+        });
+
+        remainingBudget -= totalCost;
+        remainingCargo -= totalCargo;
+      }
+    }
+
+    // Phase 2: Fill remaining space with highest absolute profit items
+    const profitOpps = viableOpps
+      .filter(
+        (opp) => !items.some((item) => item.itemTypeId === opp.itemTypeId),
+      )
+      .map((opp) => {
+        const buyPrice = opp.details?.costs.buyPrice || 0;
+        const sellPrice = opp.details?.costs.sellPrice || 0;
+        const safeQuantity = Math.max(
+          1,
+          Math.floor(opp.totalAmountTradedPerWeek * 0.5),
+        );
+        const maxAffordable = Math.floor(remainingBudget / buyPrice);
+        const maxByVolume = Math.floor(
+          remainingCargo / (opp.details?.volume || 1),
+        );
+        const quantity = Math.min(safeQuantity, maxAffordable, maxByVolume);
+        const totalProfit = quantity * (sellPrice - buyPrice) * (1 - 0.045);
+
+        return { opp, quantity, totalProfit };
+      })
+      .filter((item) => item.quantity > 0 && item.totalProfit > 0)
+      .sort((a, b) => b.totalProfit - a.totalProfit);
+
+    for (const { opp, quantity } of profitOpps) {
+      if (remainingCargo <= 0 || remainingBudget <= 0) break;
+
+      const buyPrice = opp.details?.costs.buyPrice || 0;
+      const sellPrice = opp.details?.costs.sellPrice || 0;
+      const itemVolume = opp.details?.volume || 1;
+
+      const totalCost = quantity * buyPrice;
+      const totalCargo = quantity * itemVolume;
+      const profit = quantity * (sellPrice - buyPrice) * (1 - 0.045);
+
+      if (totalCost <= remainingBudget && totalCargo <= remainingCargo) {
+        items.push({
+          itemTypeId: opp.itemTypeId,
+          itemName: opp.itemTypeName,
+          quantity,
+          totalCost,
+          totalCargo,
+          profit,
+          profitPerM3: profit / totalCargo,
+        });
+
+        remainingBudget -= totalCost;
+        remainingCargo -= totalCargo;
+      }
+    }
+
+    const endTime = performance.now();
+    const totalProfit = items.reduce((sum, item) => sum + item.profit, 0);
+    const totalCargo = items.reduce((sum, item) => sum + item.totalCargo, 0);
+
+    return {
+      items,
+      totalProfit,
+      cargoUtilization: (totalCargo / cargoCapacity) * 100,
+      totalItems: items.length,
+      executionTimeMs: endTime - startTime,
+      algorithm: 'Hybrid Smart (80%/20%)',
+    };
+  }
+
+  /**
+   * Create comparison analysis
+   */
+  private createComparison(
+    algorithms: Record<string, PackingResult>,
+  ): AlgorithmComparison {
+    const results = Object.values(algorithms);
+    const maxProfit = Math.max(...results.map((r) => r.totalProfit));
+    const maxUtilization = Math.max(...results.map((r) => r.cargoUtilization));
+    const minTime = Math.min(...results.map((r) => r.executionTimeMs));
+
+    return {
+      maxProfit,
+      maxUtilization,
+      minTime,
+      profitDifference:
+        maxProfit - Math.min(...results.map((r) => r.totalProfit)),
+      speedDifference:
+        Math.max(...results.map((r) => r.executionTimeMs)) - minTime,
+      recommendation: this.getRecommendation(algorithms),
+    };
+  }
+
+  /**
+   * Get algorithm recommendation based on performance
+   */
+  private getRecommendation(algorithms: Record<string, PackingResult>): string {
+    const results = Object.entries(algorithms);
+    const [bestName] = results.reduce((best, current) => {
+      const [bestAlgo, bestResult] = best;
+      const [currentAlgo, currentResult] = current;
+
+      // Score = profit per ISK * utilization% / time penalty
+      const bestScore =
+        ((bestResult.totalProfit / 1000000) *
+          (bestResult.cargoUtilization / 100)) /
+        Math.max(bestResult.executionTimeMs / 100, 1);
+      const currentScore =
+        ((currentResult.totalProfit / 1000000) *
+          (currentResult.cargoUtilization / 100)) /
+        Math.max(currentResult.executionTimeMs / 100, 1);
+
+      return currentScore > bestScore ? current : best;
+    });
+
+    return `${bestName} offers the best balance of profit, efficiency, and speed`;
   }
 }

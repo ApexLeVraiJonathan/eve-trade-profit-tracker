@@ -64,3 +64,32 @@ export interface CycleConfig {
   allocations: Record<string, number>;
   filters: CycleFilters;
 }
+
+// Algorithm comparison interfaces
+export interface PackedItem {
+  itemTypeId: number;
+  itemName: string;
+  quantity: number;
+  totalCost: number;
+  totalCargo: number;
+  profit: number;
+  profitPerM3: number;
+}
+
+export interface PackingResult {
+  items: PackedItem[];
+  totalProfit: number;
+  cargoUtilization: number; // Percentage
+  totalItems: number;
+  executionTimeMs: number;
+  algorithm: string;
+}
+
+export interface AlgorithmComparison {
+  maxProfit: number;
+  maxUtilization: number;
+  minTime: number;
+  profitDifference: number;
+  speedDifference: number;
+  recommendation: string;
+}

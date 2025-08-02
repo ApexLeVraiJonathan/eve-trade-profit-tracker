@@ -1,5 +1,6 @@
 import { Controller, Get, Post, Body, Query } from '@nestjs/common';
 import { CycleManagementService } from './cycle-management.service';
+import { ArbitrageService } from '../arbitrage/arbitrage.service';
 import { CreateCycleDto, CycleFiltersDto } from './dto/cycle.dto';
 import { CycleOpportunitiesResponse } from './interfaces/cycle.interface';
 
@@ -7,6 +8,7 @@ import { CycleOpportunitiesResponse } from './interfaces/cycle.interface';
 export class CycleManagementController {
   constructor(
     private readonly cycleManagementService: CycleManagementService,
+    private readonly arbitrageService: ArbitrageService,
   ) {}
 
   /**
@@ -77,6 +79,58 @@ export class CycleManagementController {
       allocations,
       filters,
     );
+  }
+
+  /**
+   * 🏁 ALGORITHM COMPETITION: Compare packing algorithms
+   */
+  @Get('algorithm-competition')
+  async compareAlgorithms(
+    @Query('sourceHub') sourceHub: string = 'jita',
+    @Query('destinationHub') destinationHub: string = 'amarr',
+    @Query('budget') budgetStr: string = '500000000',
+  ) {
+    const budget = parseInt(budgetStr);
+
+    // Transport costs per 60km³ shipment (based on jumps)
+    const transportCosts: Record<string, number> = {
+      amarr: 46 * 1500000, // 46 jumps × 1.5M ISK
+      dodixie: 16 * 1500000, // 16 jumps × 1.5M ISK
+      hek: 20 * 1500000, // 20 jumps × 1.5M ISK
+      rens: 26 * 1500000, // 26 jumps × 1.5M ISK
+    };
+
+    // Get arbitrage opportunities for this route
+    const opportunities =
+      await this.arbitrageService.findMultiHubArbitrageOpportunities({
+        sourceHub,
+        destinationHubs: [destinationHub],
+        filters: {
+          minMarginPercent: 15,
+          sortBy: 'profitPerM3',
+          sortOrder: 'desc',
+        },
+      });
+
+    const hubOpportunities = opportunities; // All opportunities for the destination hub
+    const transportCost = transportCosts[destinationHub.toLowerCase()] || 0;
+
+    // Run the algorithm competition
+    const competition =
+      await this.cycleManagementService.comparePackingAlgorithms(
+        hubOpportunities,
+        budget,
+        transportCost,
+      );
+
+    return {
+      success: true,
+      route: `${sourceHub} → ${destinationHub}`,
+      budget: budget.toLocaleString(),
+      transportCost: transportCost.toLocaleString(),
+      availableOpportunities: hubOpportunities.length,
+      competition,
+    };
   }
 
   /**
