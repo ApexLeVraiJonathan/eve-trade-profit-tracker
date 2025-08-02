@@ -10,10 +10,10 @@ import {
   EsiMarketPrice,
 } from './interfaces/esi.interface';
 
-interface QueuedRequest {
+interface QueuedRequest<T = unknown> {
   url: string;
-  resolve: (value: any) => void;
-  reject: (error: any) => void;
+  resolve: (value: EsiApiResponse<T>) => void;
+  reject: (error: EsiApiResponse<never>) => void;
 }
 
 @Injectable()
@@ -29,7 +29,7 @@ export class EsiService {
     process.env.ESI_USER_AGENT || 'EVE-Trade-Profit-Tracker/1.0.0';
 
   // Centralized rate limiting and queue management
-  private requestQueue: QueuedRequest[] = [];
+  private requestQueue: QueuedRequest<any>[] = [];
   private lastRequestTime = 0;
   private requestDelay: number;
 
@@ -57,8 +57,8 @@ export class EsiService {
       `ESI Service initialized: ${this.maxRequestsPerSecond} req/sec, ${this.requestDelay}ms delay`,
     );
 
-    // Start processing queue
-    this.processQueue();
+    // Start processing queue (background process)
+    void this.processQueue();
   }
 
   /**
@@ -107,8 +107,8 @@ export class EsiService {
       const request = this.requestQueue.shift();
       if (!request) continue;
 
-      // Process request
-      this.processRequest(request);
+      // Process request (fire and forget for concurrency)
+      void this.processRequest(request);
 
       // Rate limiting delay
       await new Promise((resolve) => setTimeout(resolve, this.requestDelay));
@@ -118,7 +118,7 @@ export class EsiService {
   /**
    * Process a single request with error handling
    */
-  private async processRequest(request: QueuedRequest): Promise<void> {
+  private async processRequest(request: QueuedRequest<any>): Promise<void> {
     this.totalCalls++;
 
     try {
@@ -147,7 +147,7 @@ export class EsiService {
 
       request.resolve({
         success: true,
-        data: response.data,
+        data: response.data as unknown,
         rateLimit: rateLimitInfo,
       });
     } catch (error: unknown) {
@@ -167,11 +167,11 @@ export class EsiService {
    * Queue a request for processing with rate limiting
    */
   private queueRequest<T>(url: string): Promise<EsiApiResponse<T>> {
-    return new Promise((resolve, reject) => {
+    return new Promise<EsiApiResponse<T>>((resolve, reject) => {
       this.requestQueue.push({
         url,
-        resolve,
-        reject,
+        resolve: resolve as (value: EsiApiResponse<any>) => void,
+        reject: reject as (error: EsiApiResponse<never>) => void,
       });
     });
   }
@@ -232,11 +232,15 @@ export class EsiService {
       if (result.status === 'fulfilled') {
         return result.value;
       } else {
+        const errorMessage =
+          result.reason instanceof Error
+            ? result.reason.message
+            : 'Promise rejected';
         return {
           regionId: requests[index].regionId,
           itemTypeId: requests[index].itemTypeId,
           success: false,
-          error: result.reason?.message || 'Promise rejected',
+          error: errorMessage,
         };
       }
     });
@@ -597,7 +601,8 @@ export class EsiService {
       this.logger.log('No liquid items provided, fetching all orders (slow)');
 
       // First, collect all orders to determine unique item types
-      const allOrders: Array<{ order: any; regionIdNum: number }> = [];
+      const allOrders: Array<{ order: EsiMarketOrder; regionIdNum: number }> =
+        [];
 
       for (const [regionId, stations] of Object.entries(stationsByRegion)) {
         const regionIdNum = parseInt(regionId);

@@ -43,56 +43,15 @@ export class ArbitrageService {
   ): Promise<ArbitrageOpportunity[]> {
     this.logger.log('Starting arbitrage opportunity analysis...');
 
-    // SIMPLIFIED: Only filter items that have sold recently (fast turnover)
-    const simpleFilters = {
-      maxDaysStale: 7, // Must have sold within last 7 days (fast turnover)
-      // NO minHubCount - irrelevant for arbitrage
-      // NO minTotalTrades - use recent frequency instead
-      // NO minValue - redundant with ISK/m³ sorting
-      // NO minLiquidityScore - use for sorting, not filtering
-    };
-
-    // Use better liquidity criteria (Updated: 8 trades, 1M ISK)
-    const liquidItemIds = await this.liquidityAnalyzer.getHighLiquidityItems({
-      minTotalTrades: 8, // Balanced threshold for sell-order-only filtering
-      minValue: 1000000, // 1M ISK minimum average trade value
-      maxDaysStale: 7,
-      minHubCount: 1, // Single hub OK (don't need multi-hub requirement)
-      minLiquidityScore: 0, // Ignore composite score
-    });
-
-    this.logger.log(
-      `Found ${liquidItemIds.length} items with recent trading activity`,
-    );
-
-    // DEBUG: Check if Photonic items made it through liquidity filter
-    const photonicIds = await this.prisma.itemType.findMany({
-      where: { name: { contains: 'Photonic', mode: 'insensitive' } },
-      select: { id: true, name: true },
-    });
-
-    for (const item of photonicIds) {
-      const isLiquid = liquidItemIds.includes(item.id);
-      this.logger.log(
-        `🔍 PHOTONIC LIQUIDITY: ${item.name} - ${isLiquid ? '✅ INCLUDED' : '❌ FILTERED OUT'}`,
-      );
-    }
-
-    // Get fresh market prices from ESI (targeted fetching for liquid items)
+    // Get fresh market prices from ESI for all tracked items
+    // Let the opportunity analysis and filtering handle liquidity/profitability
     const rawMarketPrices =
-      await this.esiService.fetchMarketPricesForTrackedStations(liquidItemIds);
+      await this.esiService.fetchMarketPricesForTrackedStations();
 
-    // Convert ESI data to our internal format and filter to recently traded items
-    const allMarketPrices: MarketPrice[] = rawMarketPrices.map(
+    // Convert ESI data to our internal format
+    const marketPrices: MarketPrice[] = rawMarketPrices.map(
       convertEsiToMarketPrice,
     );
-
-    const marketPrices =
-      liquidItemIds.length > 0
-        ? allMarketPrices.filter((price) =>
-            liquidItemIds.includes(price.itemTypeId),
-          )
-        : allMarketPrices; // Fallback to all items if no recent items found
 
     if (marketPrices.length === 0) {
       this.logger.warn('No valid market prices available for analysis');
@@ -100,7 +59,7 @@ export class ArbitrageService {
     }
 
     this.logger.log(
-      `Filtering ${allMarketPrices.length} → ${marketPrices.length} market prices (only recently traded items)`,
+      `Processing ${marketPrices.length} market prices for arbitrage analysis`,
     );
 
     // Group prices by item type for comparison
@@ -302,10 +261,6 @@ export class ArbitrageService {
       number,
       { id: number; name: string; volume: number | null }
     >,
-    tradingMetricsMap?: Map<
-      number,
-      { tradesPerWeek: number; totalAmountTradedPerWeek: number }
-    >,
   ): Promise<ArbitrageOpportunity[]> {
     const opportunities: ArbitrageOpportunity[] = [];
 
@@ -493,10 +448,6 @@ export class ArbitrageService {
     destinationSellOrder: MarketPrice,
     itemType: ItemTypeInfo,
     quantity: number,
-    tradingMetricsMap?: Map<
-      number,
-      { tradesPerWeek: number; totalAmountTradedPerWeek: number }
-    >,
   ): Promise<ArbitrageOpportunity | null> {
     try {
       // Get station information
@@ -1126,11 +1077,8 @@ export class ArbitrageService {
     const liquidItems = await this.liquidityAnalyzer.getDestinationLiquidity(
       destStationId,
       {
-        minTotalTrades: 5, // Working around liquidity counting bug at 6+ trades
+        minDaysPerWeek: 4, // 4+ days per week traded (new liquidity logic)
         minValue: 1000000, // 1M ISK minimum average trade value
-        maxDaysStale: 7,
-        minHubCount: 1,
-        minLiquidityScore: 0,
       },
     );
 

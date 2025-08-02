@@ -10,10 +10,10 @@ export interface ArbitrageQueryParams {
   limit?: string;
   sortBy?: string;
   sortOrder?: string;
-  
+
   // Hub filtering (solar system names)
   fromHub?: string; // Source hub filter (e.g., "Jita")
-  toHub?: string;   // Destination hub filter (e.g., "Amarr")
+  toHub?: string; // Destination hub filter (e.g., "Amarr")
 }
 
 export interface ArbitrageSummaryQueryParams {

@@ -5,18 +5,18 @@ export interface ArbitrageOpportunity {
   // Core item info
   itemTypeId: number;
   itemTypeName: string;
-  
+
   // Hub routing (solar system names)
   fromHub: string; // e.g., "Jita"
-  toHub: string;   // e.g., "Amarr"
-  
+  toHub: string; // e.g., "Amarr"
+
   // Key metrics for trading decisions
-  margin: number;              // Gross margin percentage
-  possibleProfit: number;      // Net profit in ISK
-  tradesPerWeek: number;       // Trading frequency from historical data
+  margin: number; // Gross margin percentage
+  possibleProfit: number; // Net profit in ISK
+  tradesPerWeek: number; // Trading frequency from historical data
   totalAmountTradedPerWeek: number; // Total volume traded weekly
-  iskPerM3: number;           // Profit density (ISK per cubic meter)
-  
+  iskPerM3: number; // Profit density (ISK per cubic meter)
+
   // Detailed breakdown (for advanced users)
   details?: {
     itemTypeId: number;
@@ -118,7 +118,7 @@ export interface ArbitrageFilters {
 
   // Hub filtering (solar system names)
   fromHub?: string; // Source hub filter (e.g., "Jita")
-  toHub?: string;   // Destination hub filter (e.g., "Amarr")
+  toHub?: string; // Destination hub filter (e.g., "Amarr")
 
   // Sorting and pagination
   sortBy?: 'profit' | 'margin' | 'profitPerM3' | 'roi' | 'tradesPerWeek';

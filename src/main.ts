@@ -4,7 +4,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 // 🎯 GLOBAL FIX: BigInt JSON serialization
-(BigInt.prototype as any).toJSON = function () {
+// Extend BigInt prototype to include toJSON method for JSON serialization
+declare global {
+  interface BigInt {
+    toJSON(): string;
+  }
+}
+
+BigInt.prototype.toJSON = function (this: bigint): string {
   return this.toString();
 };
 

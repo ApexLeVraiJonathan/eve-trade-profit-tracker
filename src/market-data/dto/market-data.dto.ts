@@ -77,3 +77,10 @@ export interface MarketDataQueryResultDto {
     };
   };
 }
+
+// Generic response DTO for market data operations
+export interface MarketDataResponseDto<T = any> {
+  success: boolean;
+  data?: T;
+  message?: string;
+}

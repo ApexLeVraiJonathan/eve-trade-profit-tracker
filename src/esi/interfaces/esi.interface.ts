@@ -40,18 +40,34 @@ export interface EsiMarketPrice {
   orderRange: string;
 }
 
-export interface EsiApiResponse<T> {
-  success: boolean;
-  data?: T;
-  error?: string;
-  rateLimit?: {
-    remaining: number;
-    reset: number;
-  };
-}
-
 export interface EsiRateLimitInfo {
   remaining: number;
   reset: number;
   limit: number;
+}
+
+// Generic ESI API response wrapper (unified interface)
+export interface EsiApiResponse<T = unknown> {
+  success: boolean;
+  data?: T;
+  error?: string;
+  rateLimit?: EsiRateLimitInfo;
+}
+
+// ESI Market Orders API response
+export interface EsiMarketOrdersResponse {
+  [index: number]: EsiMarketOrder;
+}
+
+// ESI Type Information API response
+export interface EsiTypeInfoResponse {
+  type_id: number;
+  name: string;
+  description: string;
+  published: boolean;
+  group_id: number;
+  volume?: number;
+  capacity?: number;
+  portion_size?: number;
+  mass?: number;
 }
