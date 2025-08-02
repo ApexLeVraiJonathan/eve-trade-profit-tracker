@@ -52,17 +52,35 @@ export class ArbitrageService {
       // NO minLiquidityScore - use for sorting, not filtering
     };
 
-    const liquidItemIds = await this.liquidityAnalyzer.getRecentlyTradedItems(
-      simpleFilters.maxDaysStale,
-    );
+    // Use better liquidity criteria (Updated: 8 trades, 1M ISK)
+    const liquidItemIds = await this.liquidityAnalyzer.getHighLiquidityItems({
+      minTotalTrades: 8, // Balanced threshold for sell-order-only filtering
+      minValue: 1000000, // 1M ISK minimum average trade value
+      maxDaysStale: 7,
+      minHubCount: 1, // Single hub OK (don't need multi-hub requirement)
+      minLiquidityScore: 0, // Ignore composite score
+    });
 
     this.logger.log(
-      `Using simplified filtering: found ${liquidItemIds.length} items traded within ${simpleFilters.maxDaysStale} days`,
+      `Found ${liquidItemIds.length} items with recent trading activity`,
     );
 
-    // Get fresh market prices from ESI
+    // DEBUG: Check if Photonic items made it through liquidity filter
+    const photonicIds = await this.prisma.itemType.findMany({
+      where: { name: { contains: 'Photonic', mode: 'insensitive' } },
+      select: { id: true, name: true },
+    });
+
+    for (const item of photonicIds) {
+      const isLiquid = liquidItemIds.includes(item.id);
+      this.logger.log(
+        `🔍 PHOTONIC LIQUIDITY: ${item.name} - ${isLiquid ? '✅ INCLUDED' : '❌ FILTERED OUT'}`,
+      );
+    }
+
+    // Get fresh market prices from ESI (targeted fetching for liquid items)
     const rawMarketPrices =
-      await this.esiService.fetchMarketPricesForTrackedStations();
+      await this.esiService.fetchMarketPricesForTrackedStations(liquidItemIds);
 
     // Convert ESI data to our internal format and filter to recently traded items
     const allMarketPrices: MarketPrice[] = rawMarketPrices.map(
@@ -94,21 +112,28 @@ export class ArbitrageService {
 
     const opportunities: ArbitrageOpportunity[] = [];
 
+    // Pre-fetch all item type data to avoid N+1 database queries
+    const uniqueItemTypeIds = Array.from(pricesByItem.keys()).map((id) =>
+      parseInt(id),
+    );
+    const itemTypes = await this.prisma.itemType.findMany({
+      where: { id: { in: uniqueItemTypeIds } },
+      select: { id: true, name: true, volume: true },
+    });
+    const itemTypeMap = new Map(itemTypes.map((item) => [item.id, item]));
+
     for (const [itemTypeId, prices] of pricesByItem) {
-      this.logger.debug(
-        `Analyzing item ${itemTypeId}: ${prices.length} price points across hubs`,
-      );
+      // Removed general debug logging
 
       // Find the best buy and sell opportunities for this item
       const itemOpportunities = await this.analyzeItemArbitrage(
         parseInt(itemTypeId),
         prices,
         filters,
+        itemTypeMap,
       );
 
-      this.logger.debug(
-        `Item ${itemTypeId} produced ${itemOpportunities.length} opportunities`,
-      );
+      // Removed general debug logging
       opportunities.push(...itemOpportunities);
     }
 
@@ -207,16 +232,14 @@ export class ArbitrageService {
     const opportunities = await this.findArbitrageOpportunities(filters);
 
     const totalPotentialProfit = opportunities.reduce(
-      (sum, opp) => sum + opp.profitAnalysis.netProfit,
+      (sum, opp) => sum + opp.possibleProfit,
       0,
     );
 
     const averageMargin =
       opportunities.length > 0
-        ? opportunities.reduce(
-            (sum, opp) => sum + opp.profitAnalysis.grossMarginPercent,
-            0,
-          ) / opportunities.length
+        ? opportunities.reduce((sum, opp) => sum + opp.margin, 0) /
+          opportunities.length
         : 0;
 
     // Group by hub
@@ -226,13 +249,13 @@ export class ArbitrageService {
     >();
 
     opportunities.forEach((opp) => {
-      const hubName = opp.sellHub.stationName;
+      const hubName = opp.toHub; // Use streamlined hub name
       const existing = hubStats.get(hubName) || {
         opportunities: 0,
         totalProfit: 0,
       };
       existing.opportunities++;
-      existing.totalProfit += opp.profitAnalysis.netProfit;
+      existing.totalProfit += opp.possibleProfit; // Use streamlined field
       hubStats.set(hubName, existing);
     });
 
@@ -275,54 +298,177 @@ export class ArbitrageService {
     itemTypeId: number,
     prices: MarketPrice[],
     filters?: ArbitrageFilters,
+    itemTypeMap?: Map<
+      number,
+      { id: number; name: string; volume: number | null }
+    >,
+    tradingMetricsMap?: Map<
+      number,
+      { tradesPerWeek: number; totalAmountTradedPerWeek: number }
+    >,
   ): Promise<ArbitrageOpportunity[]> {
     const opportunities: ArbitrageOpportunity[] = [];
 
-    // Get item info
-    const itemType = await this.prisma.itemType.findUnique({
-      where: { id: itemTypeId },
-      select: { id: true, name: true, volume: true },
-    });
+    this.logger.log(
+      `🔍 ENTER analyzeItemArbitrage: itemTypeId=${itemTypeId}, ${prices.length} prices`,
+    );
 
-    if (!itemType || !itemType.volume) {
-      this.logger.debug(`Skipping item ${itemTypeId}: No item info or volume`);
+    // Get item info from map or database
+    let itemType:
+      | { id: number; name: string; volume: number | null }
+      | undefined;
+    if (itemTypeMap) {
+      itemType = itemTypeMap.get(itemTypeId);
+    } else {
+      // Fallback to database query if map not provided
+      const dbItemType = await this.prisma.itemType.findUnique({
+        where: { id: itemTypeId },
+        select: { id: true, name: true, volume: true },
+      });
+      itemType = dbItemType || undefined;
+    }
+
+    if (!itemType) {
+      this.logger.log(
+        `❌ EARLY EXIT: Item type ${itemTypeId} not found in database/map`,
+      );
       return opportunities;
     }
+
+    if (!itemType.volume) {
+      this.logger.log(
+        `❌ EARLY EXIT: Item ${itemType.name} has no volume (${itemType.volume})`,
+      );
+      return opportunities;
+    }
+
+    this.logger.log(
+      `✅ CHECKPOINT 1: Item ${itemType.name}, volume: ${itemType.volume}m³`,
+    );
 
     // Only analyze sell orders for cross-region arbitrage
     const sellOrders = prices.filter((p) => p.orderType === 'sell');
 
-    this.logger.debug(
-      `Item ${itemTypeId} (${itemType.name}): ${sellOrders.length} sell orders across regions`,
+    if (sellOrders.length === 0) {
+      this.logger.log(
+        `❌ EARLY EXIT: Item ${itemType.name} has no sell orders (${prices.length} total prices)`,
+      );
+      return opportunities;
+    }
+
+    this.logger.log(
+      `✅ CHECKPOINT 2: Item ${itemType.name}, ${sellOrders.length} sell orders`,
     );
 
-    // Find cross-region arbitrage opportunities between all region combinations
-    let comparisons = 0;
-    let sameRegion = 0;
-    let unprofitable = 0;
+    // DEBUG: Log Photonic items analysis
+    if (itemType.name.toLowerCase().includes('photonic')) {
+      this.logger.log(`🔍 PHOTONIC ANALYSIS: ${itemType.name}`);
+      this.logger.log(`  Sell orders: ${sellOrders.length}`);
+      if (sellOrders.length > 0) {
+        this.logger.log(
+          `  Price range: ${Math.min(...sellOrders.map((o) => o.price))} - ${Math.max(...sellOrders.map((o) => o.price))} ISK`,
+        );
+      }
+    }
 
-    for (const sourceSellOrder of sellOrders) {
-      for (const destinationSellOrder of sellOrders) {
+    // GROUP BY REGION and find BEST PRICES in each region
+    const sellOrdersByRegion = new Map<number, MarketPrice[]>();
+    sellOrders.forEach((order) => {
+      if (!sellOrdersByRegion.has(order.regionId)) {
+        sellOrdersByRegion.set(order.regionId, []);
+      }
+      sellOrdersByRegion.get(order.regionId)!.push(order);
+    });
+
+    // Sort orders in each region by price (cheapest first)
+    sellOrdersByRegion.forEach((orders, regionId) => {
+      orders.sort((a, b) => a.price - b.price);
+      // DEBUG: Log price selection for Photonic items
+      if (itemType.name.includes('Photonic')) {
+        this.logger.log(
+          `  Region ${regionId}: [${orders
+            .slice(0, 2)
+            .map((o) => o.price)
+            .join(', ')}] ISK`,
+        );
+      }
+    });
+
+    // Removed general debug logging
+
+    // Find cross-region arbitrage opportunities using BEST PRICES
+    let comparisons = 0;
+    let unprofitable = 0;
+    let profitable = 0;
+
+    // DEBUG: Log detailed analysis for ALL items to find the issue
+    this.logger.log(
+      `🔍 ANALYZING: ${itemType.name} - Regions: ${Array.from(sellOrdersByRegion.keys()).join(', ')}`,
+    );
+    for (const [regionId, orders] of sellOrdersByRegion) {
+      this.logger.log(
+        `🔍   Region ${regionId}: ${orders.length} orders, cheapest: ${orders[0]?.price} ISK`,
+      );
+    }
+
+    for (const [sourceRegionId, sourceOrders] of sellOrdersByRegion) {
+      if (sourceOrders.length === 0) continue;
+
+      // Get the CHEAPEST sell order in source region (best price to buy)
+      const bestSourceOrder = sourceOrders[0];
+
+      for (const [destRegionId, destOrders] of sellOrdersByRegion) {
+        if (destOrders.length === 0 || sourceRegionId === destRegionId)
+          continue;
+
+        // Get competitive sell price in destination (2nd cheapest to undercut the market)
+        const competitiveDestOrder =
+          destOrders.length > 1 ? destOrders[1] : destOrders[0];
+
+        // DEBUG: Log every arbitrage calculation to find the issue
+        this.logger.log(
+          `🔍 COMPARING: ${itemType.name} - Region ${sourceRegionId}→${destRegionId}: ${bestSourceOrder.price} → ${competitiveDestOrder.price} ISK`,
+        );
+
         comparisons++;
 
-        // Don't trade within the same region
-        if (sourceSellOrder.regionId === destinationSellOrder.regionId) {
-          sameRegion++;
+        // Only consider profitable opportunities
+        if (competitiveDestOrder.price <= bestSourceOrder.price) {
+          unprofitable++;
+          this.logger.log(
+            `❌ UNPROFITABLE: ${itemType.name} - ${bestSourceOrder.price} → ${competitiveDestOrder.price} (lose ${bestSourceOrder.price - competitiveDestOrder.price} ISK)`,
+          );
           continue;
         }
 
-        // Only consider profitable opportunities (destination sell price > source sell price)
-        if (destinationSellOrder.price <= sourceSellOrder.price) {
-          unprofitable++;
-          continue;
-        }
+        profitable++;
+        this.logger.log(
+          `✅ PROFITABLE: ${itemType.name} - ${bestSourceOrder.price} → ${competitiveDestOrder.price} (gain ${competitiveDestOrder.price - bestSourceOrder.price} ISK)`,
+        );
 
         const opportunity = await this.calculateCrossRegionArbitrageOpportunity(
-          sourceSellOrder,
-          destinationSellOrder,
+          bestSourceOrder,
+          competitiveDestOrder,
           itemType,
-          Math.min(sourceSellOrder.volume, destinationSellOrder.volume),
+          Math.min(bestSourceOrder.volume, competitiveDestOrder.volume),
         );
+
+        // DEBUG: Log opportunity calculation result for ALL items
+        if (opportunity) {
+          this.logger.log(
+            `💰 OPPORTUNITY: ${itemType.name} - Margin: ${opportunity.margin}%, Profit: ${opportunity.possibleProfit} ISK`,
+          );
+          const meetsFilter = this.meetsFilterCriteria(opportunity, filters);
+          if (!meetsFilter) {
+            this.logger.log(
+              `❌ FILTERED OUT: ${itemType.name} - Does not meet filter criteria`,
+            );
+          }
+        } else {
+          this.logger.log(
+            `⚠️ NULL RESULT: ${itemType.name} - Opportunity calculation returned null (check calculateCrossRegionArbitrageOpportunity)`,
+          );
+        }
 
         if (opportunity && this.meetsFilterCriteria(opportunity, filters)) {
           opportunities.push(opportunity);
@@ -330,8 +476,9 @@ export class ArbitrageService {
       }
     }
 
-    this.logger.debug(
-      `Item ${itemTypeId} analysis: ${comparisons} comparisons, ${sameRegion} same region, ${unprofitable} unprofitable, ${opportunities.length} opportunities found`,
+    // DEBUG: Log summary for debugging
+    this.logger.log(
+      `🔍 DEBUG: ${itemType.name} - Comparisons: ${comparisons}, Unprofitable: ${unprofitable}, Profitable: ${profitable}, Final opportunities: ${opportunities.length}`,
     );
 
     return opportunities;
@@ -346,6 +493,10 @@ export class ArbitrageService {
     destinationSellOrder: MarketPrice,
     itemType: ItemTypeInfo,
     quantity: number,
+    tradingMetricsMap?: Map<
+      number,
+      { tradesPerWeek: number; totalAmountTradedPerWeek: number }
+    >,
   ): Promise<ArbitrageOpportunity | null> {
     try {
       // Get station information
@@ -355,6 +506,12 @@ export class ArbitrageService {
       ]);
 
       if (!sourceStation || !destinationStation) {
+        this.logger.log(
+          `🔍 DEBUG: Station info lookup failed - source: ${!!sourceStation}, destination: ${!!destinationStation}`,
+        );
+        this.logger.log(
+          `🔍 DEBUG: Source locationId: ${sourceSellOrder.locationId}, Dest locationId: ${destinationSellOrder.locationId}`,
+        );
         return null;
       }
 
@@ -390,65 +547,94 @@ export class ArbitrageService {
         destinationSellOrder.volume,
       );
 
+      // Get trading metrics for this item (temporarily disable optimization to debug BigInt error)
+      // const preCalculatedMetrics = tradingMetricsMap?.get(itemType.id);
+      // const tradingMetrics = preCalculatedMetrics || (await this.getTradingMetrics(itemType.id));
+      const tradingMetrics = await this.getTradingMetrics(itemType.id);
+
+      // NEW STREAMLINED FORMAT
       return {
-        itemTypeId: itemType.id,
+        // Core item info
+        itemTypeId: Number(itemType.id), // Convert BigInt to number for JSON serialization
         itemTypeName: itemType.name,
-        volume: itemType.volume ?? 0,
 
-        buyHub: {
-          stationId: sourceSellOrder.locationId.toString(),
-          stationName: sourceStation.name,
-          regionId: sourceStation.regionId,
-          regionName: sourceStation.regionName,
-          bestBuyPrice: sourceBuyPrice,
-          availableVolume: sourceSellOrder.volume,
-          totalValue: totalCost,
-        },
+        // Hub routing (solar system names)
+        fromHub: sourceStation.solarSystemName,
+        toHub: destinationStation.solarSystemName,
 
-        sellHub: {
-          stationId: destinationSellOrder.locationId.toString(),
-          stationName: destinationStation.name,
-          regionId: destinationStation.regionId,
-          regionName: destinationStation.regionName,
-          bestSellPrice: destinationSellPrice,
-          demandVolume: destinationSellOrder.volume, // Competitive volume at this price
-          totalValue: grossRevenue,
-        },
+        // Key metrics for trading decisions
+        margin: (grossMargin / sourceBuyPrice) * 100, // Gross margin percentage
+        possibleProfit: netProfit, // Net profit in ISK
+        tradesPerWeek: tradingMetrics.tradesPerWeek,
+        totalAmountTradedPerWeek: tradingMetrics.totalAmountTradedPerWeek,
+        iskPerM3: profitPerM3, // Profit density (ISK per cubic meter)
 
-        profitAnalysis: {
-          grossMargin,
-          grossMarginPercent: (grossMargin / sourceBuyPrice) * 100,
-          netProfit,
-          netProfitPercent: (netProfit / totalCost) * 100,
-          profitPerM3,
-          roi: (netProfit / totalCost) * 100,
-        },
+        // Detailed breakdown (for advanced users)
+        details: {
+          itemTypeId: Number(itemType.id), // Convert BigInt to number for JSON serialization
+          itemTypeName: itemType.name,
+          volume: itemType.volume ?? 0,
 
-        costs: {
-          buyPrice: sourceBuyPrice,
-          sellPrice: destinationSellPrice,
-          salesTax,
-          brokerFee: buyBrokerFee + sellBrokerFee,
-          totalCost: totalCost + buyBrokerFee,
-          totalRevenue: grossRevenue - sellBrokerFee - salesTax,
-        },
+          buyHub: {
+            stationId: sourceSellOrder.locationId.toString(),
+            stationName: sourceStation.name,
+            solarSystemName: sourceStation.solarSystemName,
+            regionId: sourceStation.regionId,
+            regionName: sourceStation.regionName,
+            bestBuyPrice: sourceBuyPrice,
+            availableVolume: sourceSellOrder.volume,
+            totalValue: totalCost,
+          },
 
-        logistics,
+          sellHub: {
+            stationId: destinationSellOrder.locationId.toString(),
+            stationName: destinationStation.name,
+            solarSystemName: destinationStation.solarSystemName,
+            regionId: destinationStation.regionId,
+            regionName: destinationStation.regionName,
+            bestSellPrice: destinationSellPrice,
+            demandVolume: destinationSellOrder.volume,
+            totalValue: grossRevenue,
+          },
 
-        metadata: {
-          calculatedAt: new Date(),
-          buyOrderAge: sourceOrderAge,
-          sellOrderAge: destinationOrderAge,
-          spreadPercent:
-            ((destinationSellPrice - sourceBuyPrice) / sourceBuyPrice) * 100,
-          confidence,
+          profitAnalysis: {
+            grossMargin,
+            grossMarginPercent: (grossMargin / sourceBuyPrice) * 100,
+            netProfit,
+            netProfitPercent: (netProfit / totalCost) * 100,
+            profitPerM3,
+            roi: (netProfit / totalCost) * 100,
+          },
+
+          costs: {
+            buyPrice: sourceBuyPrice,
+            sellPrice: destinationSellPrice,
+            salesTax,
+            brokerFee: buyBrokerFee + sellBrokerFee,
+            totalCost: totalCost + buyBrokerFee,
+            totalRevenue: grossRevenue - sellBrokerFee - salesTax,
+          },
+
+          logistics,
+
+          metadata: {
+            calculatedAt: new Date(),
+            buyOrderAge: sourceOrderAge,
+            sellOrderAge: destinationOrderAge,
+            spreadPercent:
+              ((destinationSellPrice - sourceBuyPrice) / sourceBuyPrice) * 100,
+            confidence,
+          },
         },
       };
     } catch (error: unknown) {
       const errorMessage =
         error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(
-        `Failed to calculate cross-region arbitrage opportunity: ${errorMessage}`,
+        `🔍 DEBUG: Exception in calculateCrossRegionArbitrageOpportunity for ${itemType.name}: ${errorMessage}`,
+      );
+      this.logger.error(
+        `🔍 DEBUG: Source: ${sourceSellOrder.locationId} (${sourceSellOrder.price}), Dest: ${destinationSellOrder.locationId} (${destinationSellOrder.price})`,
       );
       return null;
     }
@@ -504,57 +690,81 @@ export class ArbitrageService {
         sellOrder.volume,
       );
 
+      // Get trading metrics for this item
+      const tradingMetrics = await this.getTradingMetrics(itemType.id);
+
+      // NEW STREAMLINED FORMAT - same as cross-region method
       return {
-        itemTypeId: itemType.id,
+        // Core item info
+        itemTypeId: Number(itemType.id), // Convert BigInt to number for JSON serialization
         itemTypeName: itemType.name,
-        volume: itemType.volume ?? 0,
 
-        buyHub: {
-          stationId: buyOrder.locationId.toString(),
-          stationName: buyStation.name,
-          regionId: buyStation.regionId,
-          regionName: buyStation.regionName,
-          bestBuyPrice: buyPrice,
-          availableVolume: buyOrder.volume,
-          totalValue: totalCost,
-        },
+        // Hub routing (solar system names)
+        fromHub: buyStation.solarSystemName,
+        toHub: sellStation.solarSystemName,
 
-        sellHub: {
-          stationId: sellOrder.locationId.toString(),
-          stationName: sellStation.name,
-          regionId: sellStation.regionId,
-          regionName: sellStation.regionName,
-          bestSellPrice: sellPrice,
-          demandVolume: sellOrder.volume,
-          totalValue: grossRevenue,
-        },
+        // Key metrics for trading decisions
+        margin: (grossMargin / buyPrice) * 100, // Gross margin percentage
+        possibleProfit: netProfit, // Net profit in ISK
+        tradesPerWeek: tradingMetrics.tradesPerWeek,
+        totalAmountTradedPerWeek: tradingMetrics.totalAmountTradedPerWeek,
+        iskPerM3: profitPerM3, // Profit density (ISK per cubic meter)
 
-        profitAnalysis: {
-          grossMargin,
-          grossMarginPercent: (grossMargin / buyPrice) * 100,
-          netProfit,
-          netProfitPercent: (netProfit / totalCost) * 100,
-          profitPerM3,
-          roi: (netProfit / totalCost) * 100,
-        },
+        // Detailed breakdown (for advanced users)
+        details: {
+          itemTypeId: Number(itemType.id), // Convert BigInt to number for JSON serialization
+          itemTypeName: itemType.name,
+          volume: itemType.volume ?? 0,
 
-        costs: {
-          buyPrice,
-          sellPrice,
-          salesTax,
-          brokerFee,
-          totalCost: totalCost + brokerFee,
-          totalRevenue: grossRevenue - salesTax,
-        },
+          buyHub: {
+            stationId: buyOrder.locationId.toString(),
+            stationName: buyStation.name,
+            solarSystemName: buyStation.solarSystemName,
+            regionId: buyStation.regionId,
+            regionName: buyStation.regionName,
+            bestBuyPrice: buyPrice,
+            availableVolume: buyOrder.volume,
+            totalValue: totalCost,
+          },
 
-        logistics,
+          sellHub: {
+            stationId: sellOrder.locationId.toString(),
+            stationName: sellStation.name,
+            solarSystemName: sellStation.solarSystemName,
+            regionId: sellStation.regionId,
+            regionName: sellStation.regionName,
+            bestSellPrice: sellPrice,
+            demandVolume: sellOrder.volume,
+            totalValue: grossRevenue,
+          },
 
-        metadata: {
-          calculatedAt: new Date(),
-          buyOrderAge,
-          sellOrderAge,
-          spreadPercent: ((sellPrice - buyPrice) / buyPrice) * 100,
-          confidence,
+          profitAnalysis: {
+            grossMargin,
+            grossMarginPercent: (grossMargin / buyPrice) * 100,
+            netProfit,
+            netProfitPercent: (netProfit / totalCost) * 100,
+            profitPerM3,
+            roi: (netProfit / totalCost) * 100,
+          },
+
+          costs: {
+            buyPrice,
+            sellPrice,
+            salesTax,
+            brokerFee,
+            totalCost: totalCost + brokerFee,
+            totalRevenue: grossRevenue - salesTax,
+          },
+
+          logistics,
+
+          metadata: {
+            calculatedAt: new Date(),
+            buyOrderAge,
+            sellOrderAge,
+            spreadPercent: ((sellPrice - buyPrice) / buyPrice) * 100,
+            confidence,
+          },
         },
       };
     } catch (error: unknown) {
@@ -630,7 +840,7 @@ export class ArbitrageService {
   }
 
   /**
-   * Get station information with region data
+   * Get station information with region and solar system data
    */
   private async getStationInfo(stationId: bigint): Promise<StationInfo | null> {
     const station = await this.prisma.station.findUnique({
@@ -649,8 +859,44 @@ export class ArbitrageService {
     return {
       id: station.id,
       name: station.name,
+      solarSystemName: station.solarSystem.name, // Hub name like "Jita", "Amarr"
       regionId: station.solarSystem.region.id,
       regionName: station.solarSystem.region.name,
+    };
+  }
+
+  /**
+   * Get trading metrics from historical data (trades per week, volume per week)
+   */
+  private async getTradingMetrics(itemTypeId: number): Promise<{
+    tradesPerWeek: number;
+    totalAmountTradedPerWeek: number;
+  }> {
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+    const weeklyTrades = await this.prisma.marketOrderTrade.findMany({
+      where: {
+        typeId: itemTypeId,
+        scanDate: {
+          gte: oneWeekAgo,
+        },
+        isBuyOrder: false, // Only count actual sales (sell order completions)
+      },
+      select: {
+        amount: true,
+      },
+    });
+
+    const tradesPerWeek = weeklyTrades.length;
+    const totalAmountTradedPerWeek = weeklyTrades.reduce(
+      (sum, trade) => sum + Number(trade.amount),
+      0,
+    );
+
+    return {
+      tradesPerWeek,
+      totalAmountTradedPerWeek,
     };
   }
 
@@ -701,47 +947,100 @@ export class ArbitrageService {
     opportunity: ArbitrageOpportunity,
     filters?: ArbitrageFilters,
   ): boolean {
-    if (!filters) return true;
+    if (!filters) {
+      this.logger.log(
+        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - No filters provided, PASS`,
+      );
+      return true;
+    }
+
+    this.logger.log(
+      `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - Checking filters...`,
+    );
+    this.logger.log(`🔍 FILTER DEBUG: Filters: ${JSON.stringify(filters)}`);
+
+    // Hub filtering (case-insensitive)
+    if (
+      filters.fromHub &&
+      opportunity.fromHub.toLowerCase() !== filters.fromHub.toLowerCase()
+    ) {
+      this.logger.log(
+        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED fromHub filter: ${opportunity.fromHub} !== ${filters.fromHub}`,
+      );
+      return false;
+    }
 
     if (
-      filters.minProfit &&
-      opportunity.profitAnalysis.netProfit < filters.minProfit
+      filters.toHub &&
+      opportunity.toHub.toLowerCase() !== filters.toHub.toLowerCase()
     ) {
+      this.logger.log(
+        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED toHub filter: ${opportunity.toHub} !== ${filters.toHub}`,
+      );
+      return false;
+    }
+
+    // Updated field access for new streamlined format
+    if (filters.minProfit && opportunity.possibleProfit < filters.minProfit) {
+      this.logger.log(
+        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED minProfit filter: ${opportunity.possibleProfit} < ${filters.minProfit}`,
+      );
       return false;
     }
 
     if (
       filters.minMarginPercent &&
-      opportunity.profitAnalysis.grossMarginPercent < filters.minMarginPercent
+      opportunity.margin < filters.minMarginPercent
     ) {
+      this.logger.log(
+        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED minMarginPercent filter: ${opportunity.margin}% < ${filters.minMarginPercent}%`,
+      );
       return false;
     }
 
     if (
       filters.maxCargoVolume &&
-      opportunity.logistics.totalCargo > filters.maxCargoVolume
+      (opportunity.details?.logistics.totalCargo ?? 0) > filters.maxCargoVolume
     ) {
+      this.logger.log(
+        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED maxCargoVolume filter: ${opportunity.details?.logistics.totalCargo} > ${filters.maxCargoVolume}`,
+      );
       return false;
     }
 
     if (
       filters.maxInvestment &&
-      opportunity.costs.totalCost > filters.maxInvestment
+      (opportunity.details?.costs.totalCost ?? 0) > filters.maxInvestment
     ) {
+      this.logger.log(
+        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED maxInvestment filter: ${opportunity.details?.costs.totalCost} > ${filters.maxInvestment}`,
+      );
       return false;
     }
 
     if (
       filters.minProfitPerM3 &&
-      opportunity.profitAnalysis.profitPerM3 < filters.minProfitPerM3
+      opportunity.iskPerM3 < filters.minProfitPerM3
     ) {
+      this.logger.log(
+        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED minProfitPerM3 filter: ${opportunity.iskPerM3} < ${filters.minProfitPerM3}`,
+      );
       return false;
     }
 
-    if (filters.excludeHighRisk && opportunity.metadata.confidence === 'low') {
+    if (
+      filters.excludeHighRisk &&
+      opportunity.details?.metadata.confidence === 'low'
+    ) {
+      this.logger.log(
+        `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - FAILED excludeHighRisk filter: confidence is low`,
+      );
       return false;
     }
 
+    this.logger.log(
+      `🔍 FILTER DEBUG: ${opportunity.itemTypeName} - PASSED all filters`,
+    );
     return true;
   }
 
@@ -764,7 +1063,7 @@ export class ArbitrageService {
     opportunities: ArbitrageOpportunity[],
     filters?: ArbitrageFilters,
   ): ArbitrageOpportunity[] {
-    const sortBy = filters?.sortBy || 'profit';
+    const sortBy = filters?.sortBy || 'margin'; // Changed default to margin
     const sortOrder = filters?.sortOrder || 'desc';
 
     opportunities.sort((a, b) => {
@@ -773,20 +1072,28 @@ export class ArbitrageService {
 
       switch (sortBy) {
         case 'margin':
-          aValue = a.profitAnalysis.grossMarginPercent;
-          bValue = b.profitAnalysis.grossMarginPercent;
+          aValue = a.margin; // Use new streamlined field
+          bValue = b.margin;
+          break;
+        case 'profit':
+          aValue = a.possibleProfit; // Use new streamlined field
+          bValue = b.possibleProfit;
           break;
         case 'profitPerM3':
-          aValue = a.profitAnalysis.profitPerM3;
-          bValue = b.profitAnalysis.profitPerM3;
+          aValue = a.iskPerM3; // Use new streamlined field
+          bValue = b.iskPerM3;
           break;
         case 'roi':
-          aValue = a.profitAnalysis.roi;
-          bValue = b.profitAnalysis.roi;
+          aValue = a.details?.profitAnalysis.roi ?? 0; // Access via details
+          bValue = b.details?.profitAnalysis.roi ?? 0;
           break;
-        default: // 'profit'
-          aValue = a.profitAnalysis.netProfit;
-          bValue = b.profitAnalysis.netProfit;
+        case 'tradesPerWeek':
+          aValue = a.tradesPerWeek; // New sorting option
+          bValue = b.tradesPerWeek;
+          break;
+        default: // Default to margin now
+          aValue = a.margin;
+          bValue = b.margin;
           break;
       }
 
@@ -799,5 +1106,138 @@ export class ArbitrageService {
     }
 
     return opportunities;
+  }
+
+  /**
+   * Find arbitrage opportunities for a specific route (source → destination)
+   * Much more efficient than analyzing all possible routes
+   */
+  async findRouteArbitrageOpportunities(
+    sourceStationId: bigint,
+    destStationId: bigint,
+    filters: ArbitrageFilters = {},
+  ): Promise<ArbitrageOpportunity[]> {
+    this.logger.log(
+      `⏱️  Starting route arbitrage analysis: ${sourceStationId} → ${destStationId}...`,
+    );
+    const totalStartTime = Date.now();
+
+    // Get liquid items at the destination station with their trading metrics
+    const liquidItems = await this.liquidityAnalyzer.getDestinationLiquidity(
+      destStationId,
+      {
+        minTotalTrades: 5, // Working around liquidity counting bug at 6+ trades
+        minValue: 1000000, // 1M ISK minimum average trade value
+        maxDaysStale: 7,
+        minHubCount: 1,
+        minLiquidityScore: 0,
+      },
+    );
+
+    this.logger.log(`Found ${liquidItems.length} liquid items at destination`);
+
+    if (liquidItems.length === 0) {
+      this.logger.warn(
+        'No liquid items found at destination - no arbitrage opportunities',
+      );
+      return [];
+    }
+
+    // Extract type IDs for ESI calls (temporarily revert to old format)
+    const liquidItemIds = liquidItems; // Already an array of type IDs
+
+    // Get market prices for this specific route
+    this.logger.log(
+      `⏱️  Starting ESI data fetch for ${liquidItemIds.length} items...`,
+    );
+    const esiStartTime = Date.now();
+
+    const rawMarketPrices = await this.esiService.fetchMarketPricesForRoute(
+      sourceStationId,
+      destStationId,
+      liquidItemIds,
+    );
+
+    const esiDuration = Date.now() - esiStartTime;
+    this.logger.log(`⏱️  ESI data fetch completed in ${esiDuration}ms`);
+    this.logger.log(`⏱️  Starting arbitrage analysis...`);
+
+    // Convert ESI data to our internal format
+    const allMarketPrices: MarketPrice[] = rawMarketPrices.map(
+      convertEsiToMarketPrice,
+    );
+
+    this.logger.log(
+      `Processing ${allMarketPrices.length} market prices for route arbitrage analysis`,
+    );
+
+    // Group prices by item type for analysis
+    const pricesByItem = new Map<string, MarketPrice[]>();
+    allMarketPrices.forEach((price) => {
+      const key = price.itemTypeId.toString();
+      if (!pricesByItem.has(key)) {
+        pricesByItem.set(key, []);
+      }
+      pricesByItem.get(key)!.push(price);
+    });
+
+    this.logger.log(
+      `Grouped market prices into ${pricesByItem.size} unique items`,
+    );
+
+    const opportunities: ArbitrageOpportunity[] = [];
+
+    // Pre-fetch all item type data to avoid N+1 database queries
+    const uniqueItemTypeIds = Array.from(pricesByItem.keys()).map((id) =>
+      parseInt(id),
+    );
+    const itemTypes = await this.prisma.itemType.findMany({
+      where: { id: { in: uniqueItemTypeIds } },
+      select: { id: true, name: true, volume: true },
+    });
+    const itemTypeMap = new Map(itemTypes.map((item) => [item.id, item]));
+
+    // Analyze each item for arbitrage opportunities on this specific route
+    let itemIndex = 0;
+    for (const [itemTypeId, prices] of pricesByItem) {
+      itemIndex++;
+      this.logger.log(
+        `🔍 PROCESSING ITEM ${itemIndex}/${pricesByItem.size}: ID ${itemTypeId} with ${prices.length} prices`,
+      );
+
+      const itemOpportunities = await this.analyzeItemArbitrage(
+        parseInt(itemTypeId),
+        prices,
+        filters,
+        itemTypeMap,
+      );
+
+      this.logger.log(
+        `🔍 ITEM ${itemTypeId} RESULT: ${itemOpportunities.length} opportunities found`,
+      );
+      opportunities.push(...itemOpportunities);
+    }
+
+    this.logger.log(
+      `Found ${opportunities.length} route arbitrage opportunities`,
+    );
+
+    // Apply filters and sorting
+    const filteredOpportunities = this.applyFilters(opportunities, filters);
+    this.logger.debug(
+      `${opportunities.length} → ${filteredOpportunities.length} opportunities after filtering`,
+    );
+
+    const sortedOpportunities = this.sortOpportunities(
+      filteredOpportunities,
+      filters,
+    );
+
+    const totalDuration = Date.now() - totalStartTime;
+    this.logger.log(
+      `⏱️  Route arbitrage analysis completed: ${sortedOpportunities.length} opportunities found in ${totalDuration}ms`,
+    );
+
+    return sortedOpportunities;
   }
 }

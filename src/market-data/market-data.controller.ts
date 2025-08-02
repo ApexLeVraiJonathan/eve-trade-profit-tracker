@@ -266,4 +266,169 @@ export class MarketDataController {
       };
     }
   }
+
+  @Get('liquidity/test-criteria')
+  async testLiquidityCriteria(
+    @Query('minTotalTrades') minTotalTrades?: string,
+    @Query('minValue') minValue?: string,
+    @Query('maxDaysStale') maxDaysStale?: string,
+    @Query('minHubCount') minHubCount?: string,
+  ): Promise<{
+    success: boolean;
+    requestedCriteria?: any;
+    tests?: any;
+    recommendation?: any;
+    message?: string;
+  }> {
+    try {
+      const criteria = {
+        minTotalTrades: minTotalTrades ? parseInt(minTotalTrades) : 8,
+        minValue: minValue ? parseInt(minValue) : 1000000, // 1M ISK default
+        maxDaysStale: maxDaysStale ? parseInt(maxDaysStale) : 7,
+        minHubCount: minHubCount ? parseInt(minHubCount) : 1, // Single hub OK
+      };
+
+      // Test different thresholds
+      const tests = [
+        { name: 'Current Settings', ...criteria },
+        { name: 'Lower Trades (5)', ...criteria, minTotalTrades: 5 },
+        { name: 'Higher Trades (15)', ...criteria, minTotalTrades: 15 },
+        { name: 'Lower Value (500k)', ...criteria, minValue: 500000 },
+        { name: 'Higher Value (5M)', ...criteria, minValue: 5000000 },
+        { name: 'Multi-Hub Required', ...criteria, minHubCount: 2 },
+      ];
+
+      const results: Array<{
+        criteria: any;
+        itemCount: number;
+        estimatedApiCalls: number;
+        sampleItems: number[];
+      }> = [];
+
+      for (const test of tests) {
+        const itemIds = await this.liquidityAnalyzer.getHighLiquidityItems({
+          minTotalTrades: test.minTotalTrades,
+          minValue: test.minValue,
+          maxDaysStale: test.maxDaysStale,
+          minHubCount: test.minHubCount,
+          minLiquidityScore: 0, // Ignore composite score as requested
+        });
+
+        results.push({
+          criteria: test,
+          itemCount: itemIds.length,
+          estimatedApiCalls: itemIds.length * 5, // items × 5 regions
+          sampleItems: itemIds.slice(0, 5), // Show first 5 item IDs for verification
+        });
+      }
+
+      return {
+        success: true,
+        requestedCriteria: criteria,
+        tests: results,
+        recommendation: {
+          note: 'Aim for <5000 API calls total (1000 items × 5 regions)',
+          performance: results.map((r) => ({
+            name: r.criteria.name,
+            items: r.itemCount,
+            apiCalls: r.estimatedApiCalls,
+            performance: r.estimatedApiCalls < 5000 ? '✅ Fast' : '⚠️ Slow',
+          })),
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to test liquidity criteria: ${getErrorMessage(error)}`,
+      };
+    }
+  }
+
+  @Get('liquidity/debug-raw')
+  async debugRawData(
+    @Query('stationId') stationId: string,
+  ): Promise<{ success: boolean; data?: any; message?: string }> {
+    try {
+      // Use the liquidityAnalyzer to test raw database access
+      const result = await this.liquidityAnalyzer.debugRawStationData(
+        BigInt(stationId),
+      );
+      return {
+        success: true,
+        data: result,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to debug raw data: ${error.message}`,
+      };
+    }
+  }
+
+  @Get('liquidity/debug-destination')
+  async debugDestinationLiquidity(
+    @Query('stationId') stationId: string,
+    @Query('minTotalTrades') minTotalTrades?: string,
+    @Query('minValue') minValue?: string,
+    @Query('maxDaysStale') maxDaysStale?: string,
+  ): Promise<{ success: boolean; data?: any; message?: string }> {
+    try {
+      const stationIdBigInt = BigInt(stationId);
+      const criteria = {
+        minTotalTrades: minTotalTrades ? parseInt(minTotalTrades) : 12,
+        minValue: minValue ? parseInt(minValue) : 1000000,
+        maxDaysStale: maxDaysStale ? parseInt(maxDaysStale) : 7,
+        minHubCount: 1,
+        minLiquidityScore: 0,
+      };
+
+      // Test different criteria to see what works
+      const tests = [
+        { name: 'Current Criteria', ...criteria },
+        { name: 'Lower Trades (5)', ...criteria, minTotalTrades: 5 },
+        { name: 'Lower Value (100k)', ...criteria, minValue: 100000 },
+        { name: 'Longer Period (30 days)', ...criteria, maxDaysStale: 30 },
+        {
+          name: 'Very Relaxed',
+          minTotalTrades: 1,
+          minValue: 1000,
+          maxDaysStale: 30,
+          minHubCount: 1,
+          minLiquidityScore: 0,
+        },
+      ];
+
+      const results: Array<{
+        criteria: any;
+        liquidItemCount: number;
+        sampleItems: number[];
+      }> = [];
+
+      for (const test of tests) {
+        const liquidItems =
+          await this.liquidityAnalyzer.getDestinationLiquidity(
+            stationIdBigInt,
+            test,
+          );
+        results.push({
+          criteria: test,
+          liquidItemCount: liquidItems.length,
+          sampleItems: liquidItems.slice(0, 5),
+        });
+      }
+
+      return {
+        success: true,
+        data: {
+          stationId: stationId,
+          tests: results,
+        },
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Failed to debug destination liquidity: ${error}`,
+      };
+    }
+  }
 }

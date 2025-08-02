@@ -41,6 +41,138 @@ export class LiquidityAnalyzerService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
+   * Get items that are liquid at a specific destination station
+   * Focus: Items actively traded at the destination for arbitrage selling
+   */
+  /**
+   * Debug method to check raw station data
+   */
+  async debugRawStationData(stationId: bigint) {
+    // Get basic counts
+    const totalTrades = await this.prisma.marketOrderTrade.count({
+      where: { locationId: stationId },
+    });
+
+    const sellOrderTrades = await this.prisma.marketOrderTrade.count({
+      where: { locationId: stationId, isBuyOrder: false },
+    });
+
+    const buyOrderTrades = await this.prisma.marketOrderTrade.count({
+      where: { locationId: stationId, isBuyOrder: true },
+    });
+
+    // Get sample data
+    const sampleTrades = await this.prisma.marketOrderTrade.findMany({
+      where: { locationId: stationId },
+      take: 5,
+      select: {
+        typeId: true,
+        isBuyOrder: true,
+        amount: true,
+        iskValue: true,
+        scanDate: true,
+      },
+      orderBy: { scanDate: 'desc' },
+    });
+
+    return {
+      stationId: stationId.toString(),
+      totalTrades: Number(totalTrades),
+      sellOrderTrades: Number(sellOrderTrades),
+      buyOrderTrades: Number(buyOrderTrades),
+      sampleTrades: sampleTrades.map((trade) => ({
+        typeId: trade.typeId.toString(),
+        isBuyOrder: trade.isBuyOrder,
+        amount: trade.amount.toString(),
+        iskValue: trade.iskValue.toString(),
+        scanDate: trade.scanDate,
+      })),
+    };
+  }
+
+  async getDestinationLiquidity(
+    destStationId: bigint,
+    criteria: LiquidityCriteria = {},
+  ): Promise<number[]> {
+    this.logger.log(
+      `Finding liquid items at destination station ${destStationId}...`,
+    );
+
+    const defaults: Required<LiquidityCriteria> = {
+      minHubCount: 1, // Single destination is fine
+      minTotalTrades: 5, // Reduced from 12 to 5 - more realistic for limited historical data
+      minValue: 1000000, // 1M ISK
+      maxDaysStale: 7,
+      minLiquidityScore: 0, // Ignore composite score
+    };
+
+    const filter = { ...defaults, ...criteria };
+
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - filter.maxDaysStale);
+
+    // Using cutoff date: ${cutoffDate.toISOString()}
+
+    // First, check if there are any sell orders at all for this station
+    const totalSellOrders = await this.prisma.marketOrderTrade.count({
+      where: {
+        locationId: destStationId,
+        isBuyOrder: false,
+      },
+    });
+
+    const recentSellOrders = await this.prisma.marketOrderTrade.count({
+      where: {
+        locationId: destStationId,
+        isBuyOrder: false,
+        scanDate: { gte: cutoffDate },
+      },
+    });
+
+    // Station has ${totalSellOrders} total sell orders, ${recentSellOrders} recent
+
+    // Get items traded at this specific destination station (SELL ORDERS ONLY)
+    const liquidItems = await this.prisma.marketOrderTrade.groupBy({
+      by: ['typeId'],
+      where: {
+        locationId: destStationId,
+        scanDate: {
+          gte: cutoffDate,
+        },
+        isBuyOrder: false, // Only sell order completions (actual sales)
+      },
+      _count: { id: true },
+      _avg: { iskValue: true },
+      _sum: { amount: true },
+      _max: { scanDate: true },
+      orderBy: { _count: { id: 'desc' } }, // Most frequently traded first
+    });
+
+    // Found ${liquidItems.length} item types from groupBy
+
+    // Apply trade count and value filters
+    const filteredItems = liquidItems.filter((item, index) => {
+      const tradeCount = item._count.id;
+      const avgValue = Number(item._avg?.iskValue || 0);
+      const passes =
+        tradeCount >= filter.minTotalTrades && avgValue >= filter.minValue;
+
+      // Filtering item ${item.typeId}: ${passes ? 'PASS' : 'FAIL'}
+
+      return passes;
+    });
+
+    // Convert to just type IDs (temporarily revert)
+    const typeIds = filteredItems.map((item) => Number(item.typeId)); // Convert BigInt to number
+
+    this.logger.log(
+      `Found ${typeIds.length} liquid items at station ${destStationId} (${filteredItems.length}/${liquidItems.length} passed filters)`,
+    );
+
+    return typeIds;
+  }
+
+  /**
    * Get items that have been traded recently (simplified for arbitrage)
    * Focus: Fast turnover items only (sold within X days)
    */
@@ -50,13 +182,14 @@ export class LiquidityAnalyzerService {
     const cutoffDate = new Date();
     cutoffDate.setDate(cutoffDate.getDate() - maxDaysStale);
 
-    // Get items with recent trading activity
+    // Get items with recent trading activity (SELL ORDERS ONLY)
     const recentlyTradedItems = await this.prisma.marketOrderTrade.groupBy({
       by: ['typeId'],
       where: {
         scanDate: {
           gte: cutoffDate,
         },
+        isBuyOrder: false, // Only sell order completions (actual sales)
       },
       _count: { id: true },
       _max: { scanDate: true },
@@ -119,9 +252,12 @@ export class LiquidityAnalyzerService {
       'Computing liquidity metrics from historical trading data...',
     );
 
-    // Get aggregated data by item type across all hubs
+    // Get aggregated data by item type across all hubs (SELL ORDERS ONLY)
     const itemStats = await this.prisma.marketOrderTrade.groupBy({
       by: ['typeId'],
+      where: {
+        isBuyOrder: false, // Only sell order completions (actual sales)
+      },
       _count: { id: true },
       _avg: { iskValue: true },
       _sum: { amount: true },
@@ -132,19 +268,27 @@ export class LiquidityAnalyzerService {
     const metrics: LiquidityMetrics[] = [];
     const now = new Date();
 
+    // Pre-fetch all item type names to avoid N+1 database queries
+    const uniqueTypeIds = itemStats.map((stat) => stat.typeId);
+    const itemTypes = await this.prisma.itemType.findMany({
+      where: { id: { in: uniqueTypeIds } },
+      select: { id: true, name: true },
+    });
+    const itemTypeMap = new Map(itemTypes.map((item) => [item.id, item.name]));
+
     for (const stat of itemStats) {
-      // Get hub distribution for this item
+      // Get hub distribution for this item (SELL ORDERS ONLY)
       const hubDistribution = await this.prisma.marketOrderTrade.groupBy({
         by: ['locationId'],
-        where: { typeId: stat.typeId },
+        where: {
+          typeId: stat.typeId,
+          isBuyOrder: false, // Only sell order completions
+        },
         _count: { id: true },
       });
 
-      // Get item type name
-      const itemType = await this.prisma.itemType.findUnique({
-        where: { id: stat.typeId },
-        select: { name: true },
-      });
+      // Get item type name from pre-fetched map
+      const itemTypeName = itemTypeMap.get(stat.typeId);
 
       const hubCount = hubDistribution.length;
       const totalTrades = stat._count.id;
@@ -175,7 +319,7 @@ export class LiquidityAnalyzerService {
 
       metrics.push({
         itemTypeId: stat.typeId,
-        itemTypeName: itemType?.name || `Type ${stat.typeId}`,
+        itemTypeName: itemTypeName || `Type ${stat.typeId}`,
         hubCount,
         hubIds: hubDistribution.map((h) => h.locationId.toString()),
         totalTrades,

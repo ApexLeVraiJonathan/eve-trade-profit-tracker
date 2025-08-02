@@ -10,6 +10,10 @@ export interface ArbitrageQueryParams {
   limit?: string;
   sortBy?: string;
   sortOrder?: string;
+  
+  // Hub filtering (solar system names)
+  fromHub?: string; // Source hub filter (e.g., "Jita")
+  toHub?: string;   // Destination hub filter (e.g., "Amarr")
 }
 
 export interface ArbitrageSummaryQueryParams {
@@ -48,12 +52,13 @@ export function parseOptionalBoolean(value: string | undefined): boolean {
 
 export function isValidSortBy(
   value: string | undefined,
-): value is 'profit' | 'margin' | 'profitPerM3' | 'roi' {
+): value is 'profit' | 'margin' | 'profitPerM3' | 'roi' | 'tradesPerWeek' {
   return (
     value === 'profit' ||
     value === 'margin' ||
     value === 'profitPerM3' ||
-    value === 'roi'
+    value === 'roi' ||
+    value === 'tradesPerWeek'
   );
 }
 

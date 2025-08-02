@@ -94,29 +94,43 @@ export class DailyDataFetcherController {
       });
 
       const latestDate = latestRecord?.scanDate;
-      const today = new Date();
-      today.setHours(0, 0, 0, 0); // Start of today
+
+      // Use UTC to avoid timezone issues
+      const now = new Date();
+      const today = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+      );
+
+      // Expected latest date (yesterday, since files are created next day at 5:30 AM)
+      const expectedLatestDate = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1),
+      );
 
       let daysBehind = 0;
       let upToDate = true;
 
       if (latestDate) {
-        const latestDateOnly = new Date(latestDate);
-        latestDateOnly.setHours(0, 0, 0, 0);
+        // Convert to UTC date only (no time component)
+        const latestDateOnly = new Date(
+          Date.UTC(
+            latestDate.getUTCFullYear(),
+            latestDate.getUTCMonth(),
+            latestDate.getUTCDate(),
+          ),
+        );
 
-        const diffTime = today.getTime() - latestDateOnly.getTime();
-        daysBehind = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-        upToDate = daysBehind <= 1; // Allow 1 day lag (file might not be ready yet)
+        const diffTime =
+          expectedLatestDate.getTime() - latestDateOnly.getTime();
+        daysBehind = Math.max(0, Math.floor(diffTime / (1000 * 60 * 60 * 24)));
+        upToDate = daysBehind === 0; // Up to date if we have yesterday's data exactly
       } else {
         upToDate = false;
         daysBehind = 999; // No data
       }
 
-      // Generate next expected filename
-      const tomorrow = new Date(today);
-      tomorrow.setDate(today.getDate() + 1);
+      // Generate next expected filename (for today's data, which becomes available tomorrow)
       const nextExpectedFile =
-        this.dailyDataFetcherService['generateFilename'](tomorrow);
+        this.dailyDataFetcherService['generateFilename'](today);
 
       return {
         success: true,

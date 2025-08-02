@@ -42,84 +42,49 @@ export class ArbitrageController {
         limit: parseOptionalInt(filtersQuery.limit) ?? 50,
         sortBy: isValidSortBy(filtersQuery.sortBy)
           ? filtersQuery.sortBy
-          : 'profit',
+          : 'margin', // Changed default to margin
         sortOrder: isValidSortOrder(filtersQuery.sortOrder)
           ? filtersQuery.sortOrder
           : 'desc',
+        // Add hub filtering
+        fromHub: filtersQuery.fromHub,
+        toHub: filtersQuery.toHub,
       };
 
       const opportunities =
         await this.arbitrageService.findArbitrageOpportunities(filters);
 
+      // Calculate summary using new streamlined format
       const totalPotentialProfit = opportunities.reduce(
-        (sum, opp) => sum + opp.profitAnalysis.netProfit,
+        (sum, opp) => sum + opp.possibleProfit,
         0,
       );
 
       const averageMargin =
         opportunities.length > 0
-          ? opportunities.reduce(
-              (sum, opp) => sum + opp.profitAnalysis.grossMarginPercent,
-              0,
-            ) / opportunities.length
+          ? opportunities.reduce((sum, opp) => sum + opp.margin, 0) /
+            opportunities.length
           : 0;
 
-      // Convert to DTOs
+      // NEW STREAMLINED DTO FORMAT - exactly what user requested
       const opportunityDtos = opportunities.map((opp) => ({
-        itemTypeId: opp.itemTypeId,
+        // Core item info
         itemTypeName: opp.itemTypeName,
-        volume: opp.volume,
 
-        buyHub: {
-          stationId: opp.buyHub.stationId,
-          stationName: opp.buyHub.stationName,
-          regionName: opp.buyHub.regionName,
-          bestBuyPrice: opp.buyHub.bestBuyPrice.toString(),
-          availableVolume: opp.buyHub.availableVolume,
-          totalValue: opp.buyHub.totalValue.toString(),
-        },
+        // Hub routing (solar system names)
+        fromHub: opp.fromHub,
+        toHub: opp.toHub,
 
-        sellHub: {
-          stationId: opp.sellHub.stationId,
-          stationName: opp.sellHub.stationName,
-          regionName: opp.sellHub.regionName,
-          bestSellPrice: opp.sellHub.bestSellPrice.toString(),
-          demandVolume: opp.sellHub.demandVolume,
-          totalValue: opp.sellHub.totalValue.toString(),
-        },
+        // Key metrics for trading decisions
+        margin: Math.round(opp.margin * 100) / 100, // Round to 2 decimal places
+        possibleProfit: Math.round(opp.possibleProfit),
+        tradesPerWeek: opp.tradesPerWeek,
+        totalAmountTradedPerWeek: opp.totalAmountTradedPerWeek,
+        iskPerM3: Math.round(opp.iskPerM3),
 
-        profitAnalysis: {
-          grossMargin: opp.profitAnalysis.grossMargin.toString(),
-          grossMarginPercent: opp.profitAnalysis.grossMarginPercent,
-          netProfit: opp.profitAnalysis.netProfit.toString(),
-          netProfitPercent: opp.profitAnalysis.netProfitPercent,
-          profitPerM3: opp.profitAnalysis.profitPerM3.toString(),
-          roi: opp.profitAnalysis.roi,
-        },
-
-        costs: {
-          buyPrice: opp.costs.buyPrice.toString(),
-          sellPrice: opp.costs.sellPrice.toString(),
-          salesTax: opp.costs.salesTax.toString(),
-          brokerFee: opp.costs.brokerFee.toString(),
-          totalCost: opp.costs.totalCost.toString(),
-          totalRevenue: opp.costs.totalRevenue.toString(),
-        },
-
-        logistics: {
-          recommendedQuantity: opp.logistics.recommendedQuantity,
-          totalCargo: opp.logistics.totalCargo,
-          shipmentsNeeded: opp.logistics.shipmentsNeeded,
-          cargoEfficiency: opp.logistics.cargoEfficiency,
-        },
-
-        metadata: {
-          calculatedAt: opp.metadata.calculatedAt.toISOString(),
-          buyOrderAge: opp.metadata.buyOrderAge,
-          sellOrderAge: opp.metadata.sellOrderAge,
-          spreadPercent: opp.metadata.spreadPercent,
-          confidence: opp.metadata.confidence,
-        },
+        // DEBUG: Source and destination prices for verification
+        buyPrice: opp.details?.costs.buyPrice ?? 0,
+        sellPrice: opp.details?.costs.sellPrice ?? 0,
       }));
 
       // Build applied filters list
@@ -167,6 +132,121 @@ export class ArbitrageController {
     }
   }
 
+  @Get('opportunities/route')
+  async getRouteArbitrageOpportunities(
+    @Query('sourceHub') sourceHub: string,
+    @Query('destHub') destHub: string,
+    @Query() filtersQuery: ArbitrageQueryParams,
+  ): Promise<ArbitrageOpportunitiesDto | ArbitrageErrorDto> {
+    try {
+      this.logger.log(
+        `Fetching arbitrage opportunities for route: ${sourceHub} → ${destHub}`,
+      );
+
+      // Hub name to station ID mapping
+      const hubToStationId: Record<string, bigint> = {
+        jita: BigInt(60003760), // Jita IV - Moon 4 - Caldari Navy Assembly Plant
+        amarr: BigInt(60008494), // Amarr VIII (Oris) - Emperor Family Academy
+        dodixie: BigInt(60011866), // Dodixie IX - Moon 20 - Federation Navy Assembly Plant
+        rens: BigInt(60004588), // Rens VI - Moon 8 - Brutor Tribe Treasury
+        hek: BigInt(60005686), // Hek VIII - Moon 12 - Boundless Creation Factory
+      };
+
+      const sourceStationId = hubToStationId[sourceHub?.toLowerCase()];
+      const destStationId = hubToStationId[destHub?.toLowerCase()];
+
+      if (!sourceStationId || !destStationId) {
+        return {
+          success: false,
+          error: 'Invalid hub names. Use: jita, amarr, dodixie, rens, hek',
+          timestamp: new Date().toISOString(),
+        };
+      }
+
+      // Parse query parameters into filters (NO hub filtering - route is already specific)
+      const filters: ArbitrageFiltersDto = {
+        minProfit: parseOptionalFloat(filtersQuery.minProfit),
+        minMarginPercent: parseOptionalFloat(filtersQuery.minMarginPercent),
+        maxCargoVolume: parseOptionalFloat(filtersQuery.maxCargoVolume),
+        maxInvestment: parseOptionalFloat(filtersQuery.maxInvestment),
+        minProfitPerM3: parseOptionalFloat(filtersQuery.minProfitPerM3),
+        excludeHighRisk: parseOptionalBoolean(filtersQuery.excludeHighRisk),
+        limit: parseOptionalInt(filtersQuery.limit) ?? 50,
+        sortBy: isValidSortBy(filtersQuery.sortBy)
+          ? filtersQuery.sortBy
+          : 'margin',
+        sortOrder: isValidSortOrder(filtersQuery.sortOrder)
+          ? filtersQuery.sortOrder
+          : 'desc',
+        // fromHub: sourceHub,  // Removed - redundant for route endpoint
+        // toHub: destHub,      // Removed - redundant for route endpoint
+      };
+
+      // Get route-specific arbitrage opportunities
+      const opportunities =
+        await this.arbitrageService.findRouteArbitrageOpportunities(
+          sourceStationId,
+          destStationId,
+          filters,
+        );
+
+      // Calculate summary statistics
+      const totalPotentialProfit = opportunities.reduce(
+        (sum, opp) => sum + opp.possibleProfit,
+        0,
+      );
+      const averageMargin =
+        opportunities.length > 0
+          ? opportunities.reduce((sum, opp) => sum + opp.margin, 0) /
+            opportunities.length
+          : 0;
+
+      // Convert to DTOs
+      const opportunityDtos = opportunities.map((opp) => ({
+        itemTypeName: opp.itemTypeName,
+        fromHub: opp.fromHub,
+        toHub: opp.toHub,
+        margin: Math.round(opp.margin * 100) / 100,
+        possibleProfit: Math.round(opp.possibleProfit),
+        tradesPerWeek: opp.tradesPerWeek,
+        totalAmountTradedPerWeek: opp.totalAmountTradedPerWeek,
+        iskPerM3: Math.round(opp.iskPerM3),
+        buyPrice: opp.details?.costs.buyPrice ?? 0,
+        sellPrice: opp.details?.costs.sellPrice ?? 0,
+      }));
+
+      return {
+        success: true,
+        data: {
+          opportunities: opportunityDtos,
+          summary: {
+            totalOpportunities: opportunities.length,
+            totalPotentialProfit: totalPotentialProfit.toString(),
+            averageMargin: Math.round(averageMargin * 100) / 100,
+            calculatedAt: new Date().toISOString(),
+          },
+          filters: {
+            ...filters,
+            appliedFilters: [`Route: ${sourceHub} → ${destHub}`],
+          },
+        },
+      };
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : 'Unknown error';
+      this.logger.error(
+        `Failed to fetch route arbitrage opportunities: ${errorMessage}`,
+      );
+
+      return {
+        success: false,
+        error: 'Failed to fetch route arbitrage opportunities',
+        details: errorMessage,
+        timestamp: new Date().toISOString(),
+      };
+    }
+  }
+
   @Post('calculate')
   async calculateArbitrage(
     @Body() body: ArbitrageCalculationBody,
@@ -199,31 +279,36 @@ export class ArbitrageController {
         data: {
           itemTypeId: opportunity.itemTypeId,
           itemTypeName: opportunity.itemTypeName,
-          buyStationId: opportunity.buyHub.stationId,
-          sellStationId: opportunity.sellHub.stationId,
+          buyStationId: opportunity.details?.buyHub.stationId ?? '',
+          sellStationId: opportunity.details?.sellHub.stationId ?? '',
           quantity,
 
           calculation: {
-            buyPrice: opportunity.costs.buyPrice.toString(),
-            sellPrice: opportunity.costs.sellPrice.toString(),
-            grossProfit: opportunity.profitAnalysis.grossMargin.toString(),
-            netProfit: opportunity.profitAnalysis.netProfit.toString(),
-            profitMargin: opportunity.profitAnalysis.grossMarginPercent,
-            roi: opportunity.profitAnalysis.roi,
-            profitPerM3: opportunity.profitAnalysis.profitPerM3.toString(),
+            buyPrice: opportunity.details?.costs.buyPrice.toString() ?? '0',
+            sellPrice: opportunity.details?.costs.sellPrice.toString() ?? '0',
+            grossProfit:
+              opportunity.details?.profitAnalysis.grossMargin.toString() ?? '0',
+            netProfit: opportunity.possibleProfit.toString(), // Use streamlined field
+            profitMargin: opportunity.margin, // Use streamlined field
+            roi: opportunity.details?.profitAnalysis.roi ?? 0,
+            profitPerM3: opportunity.iskPerM3.toString(), // Use streamlined field
           },
 
           costs: {
-            itemCost: (opportunity.costs.buyPrice * quantity).toString(),
-            salesTax: opportunity.costs.salesTax.toString(),
-            brokerFees: opportunity.costs.brokerFee.toString(),
-            totalCost: opportunity.costs.totalCost.toString(),
+            itemCost: (
+              (opportunity.details?.costs.buyPrice ?? 0) * quantity
+            ).toString(),
+            salesTax: opportunity.details?.costs.salesTax.toString() ?? '0',
+            brokerFees: opportunity.details?.costs.brokerFee.toString() ?? '0',
+            totalCost: opportunity.details?.costs.totalCost.toString() ?? '0',
           },
 
           logistics: {
-            totalVolume: opportunity.logistics.totalCargo,
-            shipmentsNeeded: opportunity.logistics.shipmentsNeeded,
-            cargoEfficiency: opportunity.logistics.cargoEfficiency,
+            totalVolume: opportunity.details?.logistics.totalCargo ?? 0,
+            shipmentsNeeded:
+              opportunity.details?.logistics.shipmentsNeeded ?? 0,
+            cargoEfficiency:
+              opportunity.details?.logistics.cargoEfficiency ?? 0,
           },
         },
       };
@@ -274,7 +359,7 @@ export class ArbitrageController {
         if (summary.topOpportunities.length > 0) {
           const topProfit = summary.topOpportunities[0];
           recommendations.push(
-            `Top opportunity: ${topProfit.itemTypeName} - ${topProfit.profitAnalysis.netProfit.toFixed(0)} ISK profit`,
+            `Top opportunity: ${topProfit.itemTypeName} - ${topProfit.possibleProfit.toFixed(0)} ISK profit`,
           );
         }
 
@@ -299,16 +384,13 @@ export class ArbitrageController {
       const byProfitability = profitRanges.map((range) => {
         const opportunities = summary.topOpportunities.filter(
           (opp) =>
-            opp.profitAnalysis.netProfit >= range.min &&
-            opp.profitAnalysis.netProfit < range.max,
+            opp.possibleProfit >= range.min && opp.possibleProfit < range.max,
         );
 
         const avgMargin =
           opportunities.length > 0
-            ? opportunities.reduce(
-                (sum, opp) => sum + opp.profitAnalysis.grossMarginPercent,
-                0,
-              ) / opportunities.length
+            ? opportunities.reduce((sum, opp) => sum + opp.margin, 0) /
+              opportunities.length
             : 0;
 
         return {
@@ -327,7 +409,7 @@ export class ArbitrageController {
             averageMargin: Math.round(summary.averageMargin * 100) / 100,
             topProfitPerM3:
               summary.topOpportunities.length > 0
-                ? summary.topOpportunities[0].profitAnalysis.profitPerM3.toString()
+                ? summary.topOpportunities[0].iskPerM3.toString()
                 : '0',
             lastUpdated: new Date().toISOString(),
           },

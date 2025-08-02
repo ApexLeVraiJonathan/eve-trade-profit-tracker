@@ -246,6 +246,7 @@ export class MarketDataService {
 
       this.prisma.marketOrderTrade.groupBy({
         by: ['locationId'],
+        where: { isBuyOrder: false }, // Only sell order completions
         _count: { id: true },
         orderBy: { _count: { id: 'desc' } },
         take: 10,
@@ -253,6 +254,7 @@ export class MarketDataService {
 
       this.prisma.marketOrderTrade.groupBy({
         by: ['typeId'],
+        where: { isBuyOrder: false }, // Only sell order completions
         _count: { id: true },
         orderBy: { _count: { id: 'desc' } },
         take: 10,

@@ -1,60 +1,32 @@
 // DTOs for arbitrage API endpoints
 
+// NEW STREAMLINED DTO - exactly what user requested
 export interface ArbitrageOpportunityDto {
-  itemTypeId: number;
+  // 1. Item Name
   itemTypeName: string;
-  volume: number;
 
-  buyHub: {
-    stationId: string;
-    stationName: string;
-    regionName: string;
-    bestBuyPrice: string; // Decimal as string
-    availableVolume: number;
-    totalValue: string; // Decimal as string
-  };
+  // 2. Hub filtering (Jita -> Amarr format)
+  fromHub: string; // Solar system name (e.g., "Jita")
+  toHub: string; // Solar system name (e.g., "Amarr")
 
-  sellHub: {
-    stationId: string;
-    stationName: string;
-    regionName: string;
-    bestSellPrice: string; // Decimal as string
-    demandVolume: number;
-    totalValue: string; // Decimal as string
-  };
+  // 3. Margin
+  margin: number; // Gross margin percentage
 
-  profitAnalysis: {
-    grossMargin: string; // Decimal as string
-    grossMarginPercent: number;
-    netProfit: string; // Decimal as string
-    netProfitPercent: number;
-    profitPerM3: string; // Decimal as string
-    roi: number;
-  };
+  // 4. Possible profit
+  possibleProfit: number; // Net profit in ISK
 
-  costs: {
-    buyPrice: string;
-    sellPrice: string;
-    salesTax: string;
-    brokerFee: string;
-    totalCost: string;
-    totalRevenue: string;
-  };
+  // 5. Trades per week
+  tradesPerWeek: number; // Trading frequency from historical data
 
-  logistics: {
-    recommendedQuantity: number;
-    totalCargo: number;
-    shipmentsNeeded: number;
-    cargoEfficiency: number;
-  };
+  // 6. Total amount traded per week
+  totalAmountTradedPerWeek: number; // Total volume traded weekly
 
-  metadata: {
-    calculatedAt: string; // ISO date string
-    buyOrderAge: number;
-    sellOrderAge: number;
-    spreadPercent: number;
-    confidence: 'high' | 'medium' | 'low';
-  };
+  // 7. ISK/m³
+  iskPerM3: number; // Profit density (ISK per cubic meter)
+
+  // DEBUG: Source and destination prices for verification
+  buyPrice: number; // Price to buy at source
+  sellPrice: number; // Price to sell at destination
 }
 
 export interface ArbitrageOpportunitiesDto {
@@ -123,8 +95,12 @@ export interface ArbitrageFiltersDto {
   itemTypeIds?: number[];
   excludeHighRisk?: boolean;
   limit?: number;
-  sortBy?: 'profit' | 'margin' | 'profitPerM3' | 'roi';
+  sortBy?: 'profit' | 'margin' | 'profitPerM3' | 'roi' | 'tradesPerWeek'; // Added tradesPerWeek
   sortOrder?: 'asc' | 'desc';
+
+  // Hub filtering (solar system names)
+  fromHub?: string; // Source hub filter (e.g., "Jita")
+  toHub?: string; // Destination hub filter (e.g., "Amarr")
 }
 
 export interface ArbitrageErrorDto {

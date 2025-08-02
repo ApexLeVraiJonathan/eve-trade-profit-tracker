@@ -21,6 +21,7 @@ export interface MarketPriceWithItemInfo extends MarketPrice {
 export interface StationInfo {
   id: bigint;
   name: string;
+  solarSystemName: string; // Hub name like "Jita", "Amarr", etc.
   regionId: number;
   regionName: string;
 }

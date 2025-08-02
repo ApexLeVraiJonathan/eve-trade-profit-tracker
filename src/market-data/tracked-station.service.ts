@@ -187,7 +187,7 @@ export class TrackedStationService {
     return trackedStations.map((station) => station.stationId);
   }
 
-  // Initialize with the 4 major trade hubs
+  // Initialize with the 5 major trade hubs
   async initializeDefaultStations(): Promise<void> {
     this.logger.log('Initializing default tracked stations');
 
@@ -207,6 +207,10 @@ export class TrackedStationService {
       {
         stationId: '60004588',
         notes: 'Rens - Major trade hub',
+      },
+      {
+        stationId: '60003760',
+        notes: 'Jita - THE major trade hub',
       },
     ];
 

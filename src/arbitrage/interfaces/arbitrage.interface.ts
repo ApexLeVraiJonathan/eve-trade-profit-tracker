@@ -1,61 +1,82 @@
 // Core arbitrage calculation interfaces
 
+// New streamlined arbitrage opportunity focused on practical trading data
 export interface ArbitrageOpportunity {
+  // Core item info
   itemTypeId: number;
   itemTypeName: string;
-  volume: number; // m³ per unit
+  
+  // Hub routing (solar system names)
+  fromHub: string; // e.g., "Jita"
+  toHub: string;   // e.g., "Amarr"
+  
+  // Key metrics for trading decisions
+  margin: number;              // Gross margin percentage
+  possibleProfit: number;      // Net profit in ISK
+  tradesPerWeek: number;       // Trading frequency from historical data
+  totalAmountTradedPerWeek: number; // Total volume traded weekly
+  iskPerM3: number;           // Profit density (ISK per cubic meter)
+  
+  // Detailed breakdown (for advanced users)
+  details?: {
+    itemTypeId: number;
+    itemTypeName: string;
+    volume: number; // m³ per unit
 
-  buyHub: {
-    stationId: string;
-    stationName: string;
-    regionId: number;
-    regionName: string;
-    bestBuyPrice: number;
-    availableVolume: number;
-    totalValue: number; // bestBuyPrice * recommendedQuantity
-  };
+    buyHub: {
+      stationId: string;
+      stationName: string;
+      solarSystemName: string;
+      regionId: number;
+      regionName: string;
+      bestBuyPrice: number;
+      availableVolume: number;
+      totalValue: number;
+    };
 
-  sellHub: {
-    stationId: string;
-    stationName: string;
-    regionId: number;
-    regionName: string;
-    bestSellPrice: number;
-    demandVolume: number;
-    totalValue: number; // bestSellPrice * recommendedQuantity
-  };
+    sellHub: {
+      stationId: string;
+      stationName: string;
+      solarSystemName: string;
+      regionId: number;
+      regionName: string;
+      bestSellPrice: number;
+      demandVolume: number;
+      totalValue: number;
+    };
 
-  profitAnalysis: {
-    grossMargin: number; // Sell price - buy price
-    grossMarginPercent: number; // (grossMargin / buyPrice) * 100
-    netProfit: number; // After all taxes and fees
-    netProfitPercent: number; // (netProfit / totalCost) * 100
-    profitPerM3: number; // Net profit per cubic meter
-    roi: number; // Return on investment percentage
-  };
+    profitAnalysis: {
+      grossMargin: number;
+      grossMarginPercent: number;
+      netProfit: number;
+      netProfitPercent: number;
+      profitPerM3: number;
+      roi: number;
+    };
 
-  costs: {
-    buyPrice: number;
-    sellPrice: number;
-    salesTax: number; // 2.25% default
-    brokerFee: number; // 2.25% default
-    totalCost: number; // buyPrice + fees
-    totalRevenue: number; // sellPrice - taxes
-  };
+    costs: {
+      buyPrice: number;
+      sellPrice: number;
+      salesTax: number;
+      brokerFee: number;
+      totalCost: number;
+      totalRevenue: number;
+    };
 
-  logistics: {
-    recommendedQuantity: number; // Optimal quantity to trade
-    totalCargo: number; // Total m³ for recommended quantity
-    shipmentsNeeded: number; // Based on 60,000 m³ freighter
-    cargoEfficiency: number; // Percentage of cargo space used
-  };
+    logistics: {
+      recommendedQuantity: number;
+      totalCargo: number;
+      shipmentsNeeded: number;
+      cargoEfficiency: number;
+    };
 
-  metadata: {
-    calculatedAt: Date;
-    buyOrderAge: number; // Hours since order was issued
-    sellOrderAge: number; // Hours since order was issued
-    spreadPercent: number; // Price difference as percentage
-    confidence: 'high' | 'medium' | 'low'; // Based on volume/age
+    metadata: {
+      calculatedAt: Date;
+      buyOrderAge: number;
+      sellOrderAge: number;
+      spreadPercent: number;
+      confidence: 'high' | 'medium' | 'low';
+    };
   };
 }
 
@@ -95,8 +116,12 @@ export interface ArbitrageFilters {
   itemTypeIds?: number[]; // Specific items to analyze
   excludeHighRisk?: boolean; // Filter out old/small orders
 
+  // Hub filtering (solar system names)
+  fromHub?: string; // Source hub filter (e.g., "Jita")
+  toHub?: string;   // Destination hub filter (e.g., "Amarr")
+
   // Sorting and pagination
-  sortBy?: 'profit' | 'margin' | 'profitPerM3' | 'roi';
+  sortBy?: 'profit' | 'margin' | 'profitPerM3' | 'roi' | 'tradesPerWeek';
   sortOrder?: 'asc' | 'desc';
   limit?: number;
 }
