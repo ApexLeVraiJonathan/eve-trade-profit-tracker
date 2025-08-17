@@ -11,13 +11,6 @@ Complete guide for deploying EVE Trade Profit Tracker to Railway.
 - Sets up health check endpoints
 - Configures restart policies
 
-### ✅ `nixpacks.toml`
-
-- Detailed build phase configuration
-- Separates build (no DB) from runtime (with DB)
-- Ensures Prisma generation during build
-- Database migrations during startup
-
 ### ✅ `package.json` Updates
 
 - **Build script**: `prisma generate && nest build` (no DB connection)
