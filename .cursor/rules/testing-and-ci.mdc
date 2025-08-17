@@ -1,0 +1,39 @@
+---
+description: "Testing strategy and CI pipeline setup"
+globs: ["src/**/*.{spec,test}.{ts,js}", ".github/workflows/*.yml"]
+alwaysApply: true
+---
+
+# Testing & Continuous Integration
+
+## Testing Framework
+- **Jest** for unit/integration tests.
+- **React Testing Library** for Next.js components.
+- Example test command:
+  ```jsonc
+  { "test": "jest --detectOpenHandles" }
+  ```
+
+## Test Types
+- **Unit Tests**: isolate functions/services with mocks.
+- **Integration Tests**: use Supertest to call Nest endpoints in a test DB.
+- **E2E Tests**: Cypress/Playwright for critical user flows.
+
+## CI Pipeline
+- In `.github/workflows/ci.yml`:
+  ```yaml
+  name: CI
+  on: [push, pull_request]
+  jobs:
+    build-and-test:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/checkout@v3
+        - uses: actions/setup-node@v3
+          with: node-version: '18.x'
+        - run: npm ci
+        - run: npm run lint
+        - run: npm run test
+        - run: npm run build
+  ```
+- Fail the job on lint/type-test/build errors.

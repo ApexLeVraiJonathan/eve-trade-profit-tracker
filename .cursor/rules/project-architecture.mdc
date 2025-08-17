@@ -1,0 +1,49 @@
+---
+description: "Project structure conventions for Nest.js backend and Next.js frontend"
+globs: ["src/**/*.{ts,js}", "app/**/*.{ts,tsx,js,jsx}", "pages/**/*.{ts,tsx,js,jsx}"]
+alwaysApply: true
+---
+
+# Project Architecture & Structure
+
+## Nest.js Backend
+- Organize by feature modules under `src/modules`:
+  ```
+  src/
+    modules/
+      auth/
+        auth.module.ts
+        auth.controller.ts
+        auth.service.ts
+      users/
+        users.module.ts
+        users.controller.ts
+        users.service.ts
+  ```
+- Use Nest CLI to scaffold consistently:
+  ```bash
+  nest generate module <name>
+  nest generate controller <name>
+  nest generate service <name>
+  ```
+- **Controller**: only route & validate requests.
+- **Service**: contain business logic.
+- **PrismaService** (singleton) handles all DB access.
+
+## Next.js Frontend
+- Use App Router (`app/`) or Pages Router (`pages/`), grouping by feature:
+  ```
+  app/
+    dashboard/
+      page.tsx
+      DashboardComponent.tsx
+    login/
+      page.tsx
+      LoginForm.tsx
+  components/
+  hooks/
+  utils/
+  public/
+  ```
+- Co-locate CSS modules with components or use global styles in `styles/`.
+- Keep page files thin; complex logic lives in `components/` or `hooks/`.

@@ -1,0 +1,24 @@
+---
+description: "General web security best practices for Nest.js and Next.js"
+globs: ["src/**/*.{ts,tsx,js,jsx}"]
+alwaysApply: true
+---
+
+# General Security Best Practices
+
+- **HTTPS Only** in production.
+- **Helmet Middleware** in Nest.js:
+  ```ts
+  import helmet from 'helmet';
+  app.use(helmet());
+  ```
+- **CORS**: allow only your frontend origin.
+- **Input Validation**: always validate & sanitize user input (DTOs, `class-validator`).
+- **Output Encoding**: avoid `dangerouslySetInnerHTML`; sanitize HTML if needed.
+- **Rate Limiting** (optional):
+  ```ts
+  import { ThrottlerModule } from '@nestjs/throttler';
+  ThrottlerModule.forRoot({ ttl: 60, limit: 20 });
+  ```
+- **Secrets Management**: store credentials in env vars, not in code.
+- **Dependency Updates**: regularly audit & update packages (e.g. `npm audit`).

@@ -1,0 +1,27 @@
+---
+description: Enforce a shared Prettier configuration across all projects.
+globs: [".prettierrc*", "prettier.config.js"]
+alwaysApply: true
+---
+
+# Prettier Configuration Rule
+
+- Every project **must** include a Prettier config at the root (`.prettierrc.json`, `.prettierrc.js` or `prettier.config.js`).
+- The config should include at minimum:
+
+```jsonc
+{
+  "semi": true,
+  "singleQuote": true,
+  "trailingComma": "all",
+  "printWidth": 80,
+  "tabWidth": 2,
+  "bracketSpacing": true,
+  "arrowParens": "always"
+}
+
+On save or via CI, run:
+pnpm dlx prettier --write .
+
+Reject any PRs or commits that lack a valid Prettier config or where files are unformatted by Prettier.
+```

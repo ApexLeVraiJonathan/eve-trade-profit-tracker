@@ -1,0 +1,47 @@
+---
+description: "Firebase Auth integration & guards for Nest.js + Next.js"
+globs: ["src/**/*auth*.ts", "src/**/*.guard.ts"]
+alwaysApply: true
+---
+
+# Firebase Authentication & Security
+
+## Next.js Client
+- Initialize Firebase SDK with env vars:
+  ```ts
+  const firebaseConfig = {
+    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+    // …
+  };
+  initializeApp(firebaseConfig);
+  ```
+- On login, retrieve ID token and send as `Authorization: Bearer <token>`.
+
+## Nest.js Backend
+- Use Firebase Admin SDK:
+  ```ts
+  admin.initializeApp({
+    credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT))
+  });
+  ```
+- Create an `AuthGuard`:
+  ```ts
+  @Injectable()
+  export class FirebaseAuthGuard implements CanActivate {
+    async canActivate(ctx: ExecutionContext) {
+      const req = ctx.switchToHttp().getRequest();
+      const token = req.headers.authorization?.split(' ')[1];
+      req.user = await admin.auth().verifyIdToken(token);
+      return true;
+    }
+  }
+  ```
+- Protect routes:
+  ```ts
+  @UseGuards(FirebaseAuthGuard)
+  @Controller('profile')
+  export class ProfileController { … }
+  ```
+
+- **Role-Based Access** via custom claims in tokens and guard checks.

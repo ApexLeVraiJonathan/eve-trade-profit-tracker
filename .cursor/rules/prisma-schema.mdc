@@ -1,0 +1,35 @@
+---
+description: "Prisma schema & access patterns for PostgreSQL"
+globs: ["prisma/schema.prisma"]
+alwaysApply: true
+---
+
+# Prisma & PostgreSQL Best Practices
+
+- **Schema Definition**
+  - Name models singular, fields camelCase:
+    ```prisma
+    model User {
+      id        Int      @id @default(autoincrement())
+      email     String   @unique
+      createdAt DateTime @default(now())
+    }
+    ```
+- **Migrations**
+  - Always run `prisma migrate dev --name <desc>` when updating `schema.prisma`.
+  - Apply migrations in CI/production with `prisma migrate deploy`.
+
+- **Single PrismaService**
+  - Wrap `PrismaClient` in a Nest provider:
+    ```ts
+    @Global()
+    @Module({ providers: [PrismaService], exports: [PrismaService] })
+    export class PrismaModule {}
+    ```
+- **Connection Cleanup**
+  - On shutdown, call `prisma.$disconnect()` via `enableShutdownHooks()` or `onModuleDestroy()`.
+
+- **Query Optimization**
+  - Use `select`/`include` to fetch only needed fields.
+  - Implement pagination with `skip`/`take`.
+  - Add indexes in the DB for frequently queried columns.

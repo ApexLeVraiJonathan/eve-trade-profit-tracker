@@ -2,118 +2,118 @@ import { IsString, IsNumber, IsOptional, IsObject } from 'class-validator';
 
 export class CycleSummaryDto {
   @IsNumber()
-  totalOpportunities: number;
+  totalOpportunities!: number;
 
   @IsNumber()
-  totalValue: number;
+  totalValue!: number;
 
   @IsNumber()
-  totalProfit: number;
+  totalProfit!: number;
 
   @IsNumber()
-  totalTransportCost: number;
+  totalTransportCost!: number;
 
   @IsNumber()
-  averageMargin: number;
+  averageMargin!: number;
 }
 
 export class CycleOpportunityDto {
   @IsNumber()
-  itemTypeId: number;
+  itemTypeId!: number;
 
   @IsString()
-  itemName: string;
+  itemName!: string;
 
   @IsNumber()
-  buyPrice: number;
+  buyPrice!: number;
 
   @IsNumber()
-  sellPrice: number;
+  sellPrice!: number;
 
   @IsNumber()
-  margin: number;
+  margin!: number;
 
   @IsNumber()
-  profit: number;
+  profit!: number;
 
   @IsNumber()
-  profitPerM3: number;
+  profitPerM3!: number;
 
   @IsNumber()
-  quantity: number;
+  quantity!: number;
 
   @IsNumber()
-  totalCost: number;
+  totalCost!: number;
 
   @IsNumber()
-  totalCargo: number;
+  totalCargo!: number;
 
   @IsNumber()
-  shipmentsNeeded: number;
+  shipmentsNeeded!: number;
 
   @IsNumber()
-  transportCost: number;
+  transportCost!: number;
 
   @IsNumber()
-  netProfitAfterTransport: number;
+  netProfitAfterTransport!: number;
 
   @IsNumber()
-  recordedPriceLow: number;
+  recordedPriceLow!: number;
 
   @IsNumber()
-  recordedPriceHigh: number;
+  recordedPriceHigh!: number;
 
   @IsNumber()
-  recordedPriceAverage: number;
+  recordedPriceAverage!: number;
 
   @IsNumber()
-  liquidity: number;
+  liquidity!: number;
 }
 
 export class CycleAllocationResultDto {
   @IsString()
-  hub: string;
+  hub!: string;
 
   @IsNumber()
-  capital: number;
+  capital!: number;
 
   @IsNumber()
-  percentage: number;
+  percentage!: number;
 
   @IsNumber()
-  transportCost: number;
+  transportCost!: number;
 
   @IsNumber()
-  maxShipments: number;
+  maxShipments!: number;
 
   @IsObject()
-  opportunities: CycleOpportunityDto[];
+  opportunities!: CycleOpportunityDto[];
 
   @IsNumber()
-  totalValue: number;
+  totalValue!: number;
 
   @IsNumber()
-  totalProfit: number;
+  totalProfit!: number;
 
   @IsNumber()
-  totalTransportCost: number;
+  totalTransportCost!: number;
 }
 
 export class CycleOpportunitiesDto {
   @IsString()
-  cycleId: string;
+  cycleId!: string;
 
   @IsString()
-  sourceHub: string;
+  sourceHub!: string;
 
   @IsNumber()
-  totalCapital: number;
+  totalCapital!: number;
 
   @IsObject()
-  allocations: Record<string, CycleAllocationResultDto>;
+  allocations!: Record<string, CycleAllocationResultDto>;
 
   @IsObject()
-  summary: CycleSummaryDto;
+  summary!: CycleSummaryDto;
 }
 
 export class CycleFiltersDto {
@@ -132,10 +132,10 @@ export class CycleFiltersDto {
 
 export class CreateCycleDto {
   @IsString()
-  sourceHub: string;
+  sourceHub!: string;
 
   @IsNumber()
-  totalCapital: number;
+  totalCapital!: number;
 
   @IsOptional()
   @IsObject()

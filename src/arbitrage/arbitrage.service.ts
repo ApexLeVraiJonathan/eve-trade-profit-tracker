@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { EsiService } from '../esi/esi.service';
-import { LiquidityAnalyzerService } from '../market-data/liquidity-analyzer.service';
+import { LiquidityAnalyzerService } from '../market-analytics/liquidity-analyzer.service';
+import { LiquidItemData } from '../market-analytics/interfaces/liquidity.interface';
 import {
   ArbitrageOpportunity,
   TaxCalculation,
@@ -10,7 +11,6 @@ import {
   ArbitrageSummary,
   TradingHub,
   MultiHubArbitrageParams,
-  TradingMetrics,
 } from './interfaces/arbitrage.interface';
 import {
   MarketPrice,
@@ -112,14 +112,18 @@ export class ArbitrageService {
       (hub) => hub.stationId,
     );
 
-    const liquidityMap =
-      await this.liquidityAnalyzer.getMultiDestinationLiquidity(
-        destinationStationIds,
+    // Get liquidity data for each destination station
+    const liquidityMap = new Map<string, LiquidItemData[]>();
+    for (const stationId of destinationStationIds) {
+      const liquidity = await this.liquidityAnalyzer.getDestinationLiquidity(
+        stationId,
         {
           minDaysPerWeek: 4, // 4+ days per week traded (nearly daily)
           minValue: 10000000, // 10M ISK minimum average trade value (higher quality)
         },
       );
+      liquidityMap.set(stationId.toString(), liquidity);
+    }
 
     this.logger.log(`Liquidity analysis complete. Processing routes...`);
 
@@ -675,34 +679,7 @@ export class ArbitrageService {
   /**
    * Get trading metrics from historical data (trades per week, volume per week)
    */
-  private async getTradingMetrics(itemTypeId: number): Promise<TradingMetrics> {
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-
-    const weeklyTrades = await this.prisma.marketOrderTrade.findMany({
-      where: {
-        typeId: itemTypeId,
-        scanDate: {
-          gte: oneWeekAgo,
-        },
-        isBuyOrder: false, // Only count actual sales (sell order completions)
-      },
-      select: {
-        amount: true,
-      },
-    });
-
-    const tradesPerWeek = weeklyTrades.length;
-    const totalAmountTradedPerWeek = weeklyTrades.reduce(
-      (sum, trade) => sum + Number(trade.amount),
-      0,
-    );
-
-    return {
-      tradesPerWeek,
-      totalAmountTradedPerWeek,
-    };
-  }
+  // Removed unused private method getTradingMetrics to satisfy noUnusedLocals
 
   /**
    * Calculate order age in hours

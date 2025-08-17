@@ -1,5 +1,3 @@
-// Interfaces for Market Data CSV processing and internal operations
-
 export interface MarketDataCsvRow {
   location_id: string;
   region_id: string;
@@ -40,16 +38,6 @@ export interface MarketDataImportStats {
   endTime: Date;
 }
 
-export interface TrackedStationInfo {
-  id: number;
-  stationId: bigint;
-  name: string;
-  isActive: boolean;
-  addedDate: Date;
-  notes?: string;
-}
-
-// Query filters for market data
 export interface MarketDataFilters {
   stationIds?: bigint[];
   typeIds?: number[];
@@ -58,19 +46,4 @@ export interface MarketDataFilters {
   isBuyOrder?: boolean;
   limit?: number;
   offset?: number;
-}
-
-// Market data aggregation results
-export interface PriceStatistics {
-  itemTypeId: number;
-  itemTypeName: string;
-  stationId: bigint;
-  stationName: string;
-  avgBuyPrice: number;
-  avgSellPrice: number;
-  buyVolume: bigint;
-  sellVolume: bigint;
-  spread: number; // Difference between buy and sell
-  spreadPercentage: number;
-  lastUpdated: Date;
 }

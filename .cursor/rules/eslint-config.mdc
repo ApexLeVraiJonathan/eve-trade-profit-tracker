@@ -1,0 +1,39 @@
+---
+description: Enforce a consistent ESLint setup for TypeScript, Nest.js, and Next.js.
+globs: [".eslintrc*", "eslint.config.js", "package.json"]
+alwaysApply: true
+---
+
+# ESLint Configuration Rule
+
+- Every project **must** define ESLint config (`.eslintrc.json`/`.eslintrc.js` or the new `eslint.config.js`).
+- Extend the following base configs (in order):
+
+  module.exports = {
+  root: true,
+  parser: "@typescript-eslint/parser",
+  parserOptions: { project: "./tsconfig.json" },
+  extends: [
+  "eslint:recommended",
+  "plugin:@typescript-eslint/recommended",
+  "plugin:import/errors",
+  "plugin:import/warnings",
+  "plugin:import/typescript",
+  "plugin:prettier/recommended"
+  ],
+  rules: {
+  "@typescript-eslint/no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
+  "import/order": ["warn", { "alphabetize": { order: "asc", caseInsensitive: true } }],
+  // add any project-specific rules here
+  },
+  };
+
+  Add these scripts to package.json:
+  {
+  "scripts": {
+  "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
+  "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx --fix"
+  }
+  }
+
+Before commit or in CI, run pnpm run lint and reject if any errors remain.

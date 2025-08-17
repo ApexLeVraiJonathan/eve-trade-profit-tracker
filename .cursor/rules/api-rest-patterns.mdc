@@ -1,0 +1,42 @@
+---
+description: "RESTful API design rules for Nest.js controllers & DTOs"
+globs: ["src/**/*.controller.ts", "src/**/*.dto.ts", "src/**/*.service.ts"]
+alwaysApply: true
+---
+
+# API Design & REST Best Practices
+
+- **Resource URLs**
+  - Use nouns, plural: `/users`, `/posts/:id`
+  - Version your API: `/api/v1/users`
+
+- **HTTP Methods & Status Codes**
+  - `GET` → 200
+  - `POST` → 201
+  - `PUT/PATCH` → 200
+  - `DELETE` → 204
+  - Errors: 400, 401, 403, 404, 500
+
+- **DTO Validation**
+  - Use `class-validator` decorators in DTOs:
+    ```ts
+    export class CreateUserDto {
+      @IsEmail() email: string;
+      @IsString() @MinLength(8) password: string;
+    }
+    ```
+  - Register global ValidationPipe:
+    ```ts
+    app.useGlobalPipes(new ValidationPipe({ whitelist: true }));
+    ```
+
+- **Controllers vs Services**
+  - Controllers only handle routing & parsing.
+  - Services contain all business logic & call Prisma.
+
+- **Error Handling**
+  - Throw `new HttpException(message, status)` for known errors.
+  - Use a global exception filter for uncaught exceptions.
+
+- **API Documentation**
+  - Use `@nestjs/swagger` decorators to auto-generate OpenAPI spec.

@@ -272,7 +272,8 @@ export class CycleManagementController {
    */
   @Patch(':cycleId/items/:itemId/status')
   async updateCycleItemStatus(
-    @Param('cycleId') cycleId: string,
+    // cycleId is part of the route but not used here; keep for route shape
+    @Param('cycleId') _cycleId: string,
     @Param('itemId') itemId: string,
     @Body('status')
     status:

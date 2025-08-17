@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { TrackedStationService } from './tracked-station.service';
+import { TrackedStationService } from '../station-management/tracked-station.service';
 import { Decimal } from '@prisma/client/runtime/library';
 import * as fs from 'fs';
 
@@ -10,13 +10,13 @@ import {
   ProcessedMarketDataRow,
   MarketDataImportStats,
   MarketDataFilters,
-} from './interfaces/market-data.interface';
-import { MarketOrderTradeDto } from './dto/market-data.dto';
+} from '../common/interfaces/market-data.interface';
+import { MarketOrderTradeDto } from '../common/dto/market-data.dto';
 import { getErrorMessage } from '../common/interfaces/error.interface';
 
 @Injectable()
-export class MarketDataService {
-  private readonly logger = new Logger(MarketDataService.name);
+export class MarketDataImportService {
+  private readonly logger = new Logger(MarketDataImportService.name);
 
   constructor(
     private prisma: PrismaService,
@@ -327,16 +327,16 @@ export class MarketDataService {
       typeId: trade.typeId,
       isBuyOrder: trade.isBuyOrder,
       hasGone: trade.hasGone,
-      scanDate: trade.scanDate.toISOString(),
+      scanDate: trade.scanDate,
       amount: trade.amount.toString(),
-      high: trade.high.toString(),
-      low: trade.low.toString(),
-      avg: trade.avg.toString(),
+      high: Number(trade.high),
+      low: Number(trade.low),
+      avg: Number(trade.avg),
       orderNum: trade.orderNum,
       iskValue: trade.iskValue.toString(),
-      regionName: trade.region?.name,
-      itemTypeName: trade.itemType?.name,
-      stationName: trade.station?.name,
+      regionName: trade.region?.name || 'Unknown Region',
+      itemTypeName: trade.itemType?.name || 'Unknown Item',
+      stationName: trade.station?.name || 'Unknown Station',
     };
   }
 }

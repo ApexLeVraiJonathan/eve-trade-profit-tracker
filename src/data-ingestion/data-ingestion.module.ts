@@ -1,36 +1,32 @@
 import { Module } from '@nestjs/common';
 import { PrismaModule } from '../prisma/prisma.module';
-import { TrackedStationService } from './tracked-station.service';
-import { MarketDataService } from './market-data.service';
+import { StationManagementModule } from '../station-management/station-management.module';
+import { MarketDataImportService } from './market-data-import.service';
 import { DailyDataFetcherService } from './daily-data-fetcher.service';
 import { DailyDataSchedulerService } from './daily-data-scheduler.service';
-import { LiquidityAnalyzerService } from './liquidity-analyzer.service';
-import { TrackedStationController } from './tracked-station.controller';
-import { MarketDataController } from './market-data.controller';
+import { MarketDataImportController } from './market-data-import.controller';
 import { DailyDataFetcherController } from './daily-data-fetcher.controller';
 import { DailyDataSchedulerController } from './daily-data-scheduler.controller';
 
 @Module({
-  imports: [PrismaModule],
+  imports: [
+    PrismaModule,
+    StationManagementModule, // Need TrackedStationService
+  ],
   controllers: [
-    TrackedStationController,
-    MarketDataController,
+    MarketDataImportController,
     DailyDataFetcherController,
     DailyDataSchedulerController,
   ],
   providers: [
-    TrackedStationService,
-    MarketDataService,
+    MarketDataImportService,
     DailyDataFetcherService,
     DailyDataSchedulerService,
-    LiquidityAnalyzerService,
   ],
   exports: [
-    TrackedStationService,
-    MarketDataService,
+    MarketDataImportService,
     DailyDataFetcherService,
     DailyDataSchedulerService,
-    LiquidityAnalyzerService,
   ],
 })
-export class MarketDataModule {}
+export class DataIngestionModule {}

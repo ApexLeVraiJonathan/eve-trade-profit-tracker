@@ -1,0 +1,27 @@
+---
+description: "Environment variable & configuration management"
+globs: [".env*", "tsconfig*.json", ".nvmrc"]
+alwaysApply: true
+---
+
+# Environment & DevOps Configuration
+
+- **12-Factor Config**: store all config in env vars, *never* in code.
+- **.env Files**: commit `.env.example` listing required keys; keep real `.env*` out of git.
+- **ConfigModule** (Nest.js):
+  ```ts
+  ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env'] });
+  ```
+- **tsconfig.json**: ensure same `compilerOptions` across projects:
+  ```jsonc
+  {
+    "compilerOptions": {
+      "strict": true,
+      "esModuleInterop": true,
+      "skipLibCheck": true,
+      // …
+    }
+  }
+  ```
+- **Node Version**: use `.nvmrc` or `package.json#engines` to lock Node version.
+- **CI/Production**: set env vars via your hosting provider or secret manager.

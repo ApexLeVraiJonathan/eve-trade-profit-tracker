@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma as PrismaClientTypes } from '../../generated/prisma';
 import { PrismaService } from '../prisma/prisma.service';
 import { ArbitrageService } from '../arbitrage/arbitrage.service';
 import { ArbitrageOpportunity } from '../arbitrage/interfaces/arbitrage.interface';
@@ -409,6 +410,7 @@ export class CycleManagementService {
     transportCost: number,
     cargoCapacity: number,
   ): Promise<PackingResult> {
+    await Promise.resolve();
     const startTime = performance.now();
 
     const items: PackedItem[] = [];
@@ -500,6 +502,7 @@ export class CycleManagementService {
     transportCost: number,
     cargoCapacity: number,
   ): Promise<PackingResult> {
+    await Promise.resolve();
     const startTime = performance.now();
     const MAX_EXECUTION_TIME = 60000; // 60 second timeout
 
@@ -648,6 +651,7 @@ export class CycleManagementService {
     transportCost: number,
     cargoCapacity: number,
   ): Promise<PackingResult> {
+    await Promise.resolve();
     const startTime = performance.now();
 
     const items: PackedItem[] = [];
@@ -662,6 +666,7 @@ export class CycleManagementService {
 
     // Phase 1: Fill 80% of space with highest profit/m³ items
     const efficiencyTarget = cargoCapacity * 0.8;
+    void efficiencyTarget; // silence unused local while keeping intent
     const efficiencyOpps = [...viableOpps].sort(
       (a, b) => b.iskPerM3 - a.iskPerM3,
     );
@@ -857,8 +862,8 @@ export class CycleManagementService {
   private getRecommendation(algorithms: Record<string, PackingResult>): string {
     const results = Object.entries(algorithms);
     const [bestName] = results.reduce((best, current) => {
-      const [bestAlgo, bestResult] = best;
-      const [currentAlgo, currentResult] = current;
+      const [, bestResult] = best;
+      const [, currentResult] = current;
 
       // Score = profit per ISK * utilization% / time penalty
       const bestScore =
@@ -908,7 +913,7 @@ export class CycleManagementService {
     const minLiquidity = request.minLiquidity || 4;
 
     // Transport costs (1.5M ISK per jump for 60km³)
-    const transportCosts = {
+    const transportCosts: Record<string, number> = {
       amarr: 69000000, // 46 jumps
       dodixie: 24000000, // 16 jumps
       hek: 30000000, // 20 jumps
@@ -925,8 +930,10 @@ export class CycleManagementService {
           cargoCapacity,
           minProfitMargin,
           minLiquidity,
-          transportCosts: transportCosts as any,
-          hubAllocations: hubAllocations as any,
+          transportCosts:
+            transportCosts as unknown as PrismaClientTypes.JsonObject,
+          hubAllocations:
+            hubAllocations as unknown as PrismaClientTypes.JsonObject,
           startDate: request.startDate,
           endDate: request.endDate,
           status: 'PLANNED',
@@ -936,14 +943,16 @@ export class CycleManagementService {
       this.logger.log(`✅ Created cycle ${cycle.id}`);
 
       // For each destination hub, get opportunities and create cycle items
-      const allCycleItems: any[] = [];
+      const allCycleItems: Array<Record<string, unknown>> = [];
       let totalPlannedProfit = 0;
       let totalPlannedCost = 0;
 
       for (const [destinationHub, allocation] of Object.entries(
-        hubAllocations,
+        hubAllocations as Record<string, number>,
       )) {
-        const hubCapital = Math.floor(request.totalCapital * allocation);
+        const hubCapital = Math.floor(
+          Number(request.totalCapital) * allocation,
+        );
         const hubTransportCost = transportCosts[destinationHub] || 0;
 
         this.logger.log(
@@ -1084,7 +1093,8 @@ export class CycleManagementService {
         },
       });
     } catch (error) {
-      this.logger.error(`❌ Failed to create cycle: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.error(`❌ Failed to create cycle: ${message}`);
       throw error;
     }
   }
@@ -1265,7 +1275,24 @@ export class CycleManagementService {
     }
 
     // Group items by destination hub for separate shipments
-    const shipments = {};
+    const shipments: Record<
+      string,
+      {
+        hub: string;
+        items: Array<{
+          name: string;
+          quantity: number;
+          estimatedCostPerUnit: number;
+          totalEstimatedCost: number;
+          expectedProfit: number;
+          daysTraded: number;
+          priceWasAdjusted: boolean;
+        }>;
+        totalCost: number;
+        totalProfit: number;
+        itemCount: number;
+      }
+    > = {};
     let totalCostAllShipments = 0;
 
     cycle.cycleItems.forEach((item) => {
@@ -1298,21 +1325,34 @@ export class CycleManagementService {
     });
 
     // Generate multi-buy format for each shipment
-    const shoppingLists = Object.values(shipments).map((shipment: any) => {
+    const shoppingLists = Object.values(shipments).map((shipment) => {
       const multiBuyText = shipment.items
         .map((item) => `${item.name}\t${item.quantity}`)
         .join('\n');
 
-      const itemDetails = shipment.items.map((item) => ({
-        name: item.name,
-        quantity: item.quantity,
-        estimatedCostPerUnit: item.estimatedCostPerUnit,
-        totalEstimatedCost: item.totalEstimatedCost,
-        expectedProfit: item.expectedProfit,
-        daysTraded: item.daysTraded,
-        priceWasAdjusted: item.priceWasAdjusted,
-        profitPerM3: Math.round(item.expectedProfit / (item.quantity * 0.01)), // Assuming 0.01m³ per item average
-      }));
+      const itemDetails = shipment.items.map(
+        (
+          item,
+        ): {
+          name: string;
+          quantity: number;
+          estimatedCostPerUnit: number;
+          totalEstimatedCost: number;
+          expectedProfit: number;
+          daysTraded: number;
+          priceWasAdjusted: boolean;
+          profitPerM3: number;
+        } => ({
+          name: item.name,
+          quantity: item.quantity,
+          estimatedCostPerUnit: item.estimatedCostPerUnit,
+          totalEstimatedCost: item.totalEstimatedCost,
+          expectedProfit: item.expectedProfit,
+          daysTraded: item.daysTraded,
+          priceWasAdjusted: item.priceWasAdjusted,
+          profitPerM3: Math.round(item.expectedProfit / (item.quantity * 0.01)), // Assuming 0.01m³ per item average
+        }),
+      );
 
       return {
         destinationHub: shipment.hub,
@@ -1448,7 +1488,8 @@ export class CycleManagementService {
         deletedTables: ['CycleTransaction', 'CycleItem', 'TradingCycle'],
       };
     } catch (error) {
-      throw new Error(`Failed to clear cycles: ${error.message}`);
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to clear cycles: ${message}`);
     }
   }
 }

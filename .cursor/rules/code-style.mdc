@@ -1,0 +1,46 @@
+---
+description: "Consistent naming, formatting, and linting for TS/JS"
+globs: ["**/*.{ts,tsx,js,jsx}"]
+alwaysApply: true
+---
+
+# Code Style & Conventions
+
+- **Naming**
+  - PascalCase for classes & React components
+  - camelCase for variables/functions
+  - kebab-case for filenames and folders
+  - UPPER_SNAKE_CASE for constants
+
+- **Imports & Exports**
+  - One export per file.
+  - Group imports: external → internal → styles/assets.
+
+- **ESLint & Prettier**
+  - ESLint config extends:
+    ```js
+    "eslint:recommended",
+    "plugin:@typescript-eslint/recommended",
+    "plugin:import/errors",
+    "plugin:import/warnings",
+    "plugin:import/typescript",
+    "plugin:prettier/recommended"
+    ```
+  - Prettier settings:
+    ```jsonc
+    {
+      "semi": true,
+      "singleQuote": true,
+      "trailingComma": "all",
+      "printWidth": 80,
+      "tabWidth": 2
+    }
+    ```
+  - Scripts in `package.json`:
+    ```jsonc
+    {
+      "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
+      "format": "prettier --write ."
+    }
+    ```
+- **Pre-commit Hooks** (via Husky/lint-staged) to run `lint` and `format`.

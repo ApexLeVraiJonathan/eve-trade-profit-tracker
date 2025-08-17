@@ -30,7 +30,7 @@ export class EsiService {
 
   // Centralized rate limiting and queue management
   private requestQueue: QueuedRequest<any>[] = [];
-  private lastRequestTime = 0;
+  // Removed unused lastRequestTime; pacing handled by queue and requestDelay
   private requestDelay: number;
 
   // ESI rate limit tracking
@@ -64,30 +64,8 @@ export class EsiService {
   /**
    * Smart rate limiting based on ESI headers
    */
-  private async rateLimitDelay(): Promise<void> {
-    const now = Date.now();
-
-    // Check if we're close to hitting the rate limit
-    if (this.currentRateLimit.remaining <= 5) {
-      const timeUntilReset = this.currentRateLimit.reset - now;
-      if (timeUntilReset > 0 && timeUntilReset < 60000) {
-        this.logger.warn(
-          `Rate limit nearly exhausted (${this.currentRateLimit.remaining} remaining), waiting ${timeUntilReset}ms`,
-        );
-        await new Promise((resolve) => setTimeout(resolve, timeUntilReset));
-        return;
-      }
-    }
-
-    // Conservative delay to prevent hitting rate limits
-    const timeSinceLastRequest = now - this.lastRequestTime;
-    if (timeSinceLastRequest < this.requestDelay) {
-      const delay = this.requestDelay - timeSinceLastRequest;
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-
-    this.lastRequestTime = Date.now();
-  }
+  // No-op placeholder; queue pacing handles delays. Kept for future tuning.
+  // Remove unused method to satisfy noUnusedLocals
 
   /**
    * Process the request queue with rate limiting
@@ -372,7 +350,7 @@ export class EsiService {
   /**
    * Extract total page count from ESI response
    */
-  private extractTotalPages(rateLimit: any, dataLength: number): number {
+  private extractTotalPages(_rateLimit: any, dataLength: number): number {
     // For now, use a heuristic based on data length
     // If we got a full page (1000 orders), there are likely more pages
     if (dataLength === 1000) {

@@ -1,0 +1,38 @@
+---
+description: Guarantee strict TypeScript settings for both backend and frontend.
+globs: ["tsconfig*.json"]
+alwaysApply: true
+---
+
+# TypeScript Configuration Rule
+
+- All projects **must** include a `tsconfig.json` at root with strict type-checking enabled:
+
+```jsonc
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "commonjs",
+    "lib": ["ES2021", "DOM"],
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictPropertyInitialization": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
+
+When generating new Nest.js or Next.js projects, merge their defaults into this base.
+
+Run tsc --noEmit in CI to ensure no type errors before merging.
+```

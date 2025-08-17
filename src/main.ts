@@ -1,7 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import * as fs from 'fs';
-import * as path from 'path';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { ValidationPipe, Logger } from '@nestjs/common';
 
 // 🎯 GLOBAL FIX: BigInt JSON serialization
 // Extend BigInt prototype to include toJSON method for JSON serialization
@@ -15,90 +15,79 @@ BigInt.prototype.toJSON = function (this: bigint): string {
   return this.toString();
 };
 
-// Custom logger that writes to both console and file
-class FileLogger {
-  private logFile: string;
+// Configure log levels based on environment variables
+function getLogLevels(): ('error' | 'warn' | 'log' | 'debug' | 'verbose')[] {
+  const logLevel = process.env.LOG_LEVEL?.toLowerCase() || 'log';
 
-  constructor() {
-    // Create logs directory if it doesn't exist
-    const logsDir = path.join(process.cwd(), 'logs');
-    if (!fs.existsSync(logsDir)) {
-      fs.mkdirSync(logsDir);
-    }
-
-    // Create log file with timestamp
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    this.logFile = path.join(logsDir, `debug-${timestamp}.log`);
-
-    console.log(`📝 Debug logs will be saved to: ${this.logFile}`);
-  }
-
-  log(message: string, context?: string) {
-    const timestamp = new Date().toISOString();
-    const logEntry = `[${timestamp}] LOG [${context || 'Application'}] ${message}\n`;
-
-    // Write to console
-    console.log(message);
-
-    // Write to file
-    fs.appendFileSync(this.logFile, logEntry);
-  }
-
-  error(message: string, trace?: string, context?: string) {
-    const timestamp = new Date().toISOString();
-    const logEntry = `[${timestamp}] ERROR [${context || 'Application'}] ${message}${trace ? `\n${trace}` : ''}\n`;
-
-    // Write to console
-    console.error(message);
-
-    // Write to file
-    fs.appendFileSync(this.logFile, logEntry);
-  }
-
-  warn(message: string, context?: string) {
-    const timestamp = new Date().toISOString();
-    const logEntry = `[${timestamp}] WARN [${context || 'Application'}] ${message}\n`;
-
-    // Write to console
-    console.warn(message);
-
-    // Write to file
-    fs.appendFileSync(this.logFile, logEntry);
-  }
-
-  debug(message: string, context?: string) {
-    const timestamp = new Date().toISOString();
-    const logEntry = `[${timestamp}] DEBUG [${context || 'Application'}] ${message}\n`;
-
-    // Write to console
-    console.debug(message);
-
-    // Write to file
-    fs.appendFileSync(this.logFile, logEntry);
-  }
-
-  verbose(message: string, context?: string) {
-    const timestamp = new Date().toISOString();
-    const logEntry = `[${timestamp}] VERBOSE [${context || 'Application'}] ${message}\n`;
-
-    // Write to console
-    console.log(message);
-
-    // Write to file
-    fs.appendFileSync(this.logFile, logEntry);
+  switch (logLevel) {
+    case 'error':
+      return ['error'];
+    case 'warn':
+      return ['error', 'warn'];
+    case 'log':
+      return ['error', 'warn', 'log'];
+    case 'debug':
+      return ['error', 'warn', 'log', 'debug'];
+    case 'verbose':
+      return ['error', 'warn', 'log', 'debug', 'verbose'];
+    default:
+      // Production-safe default: only essential logs
+      return ['error', 'warn', 'log'];
   }
 }
 
 async function bootstrap() {
-  const fileLogger = new FileLogger();
+  const logger = new Logger('Bootstrap');
+
+  // Configure log levels based on environment
+  const logLevels = getLogLevels();
 
   const app = await NestFactory.create(AppModule, {
-    logger: fileLogger,
+    logger: logLevels,
   });
 
-  await app.listen(process.env.PORT ?? 3000);
+  // Global validation pipe
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+    }),
+  );
+
+  logger.debug('Global validation pipe configured');
+
+  // Swagger/OpenAPI Documentation
+  const config = new DocumentBuilder()
+    .setTitle('EVE Trade Profit Tracker API')
+    .setDescription(
+      'API for EVE Online market data analysis and arbitrage opportunities',
+    )
+    .setVersion('1.0')
+    .addTag('reference-data', 'EVE reference data management')
+    .addTag('market-data', 'Market data and daily imports')
+    .addTag('tracked-stations', 'Station tracking configuration')
+    .addTag('arbitrage', 'Arbitrage opportunities and calculations')
+    .addTag('esi', 'EVE Swagger Interface integration')
+    .addTag('scheduler', 'Automated data collection scheduling')
+    .build();
+
+  const document = SwaggerModule.createDocument(app, config);
+  SwaggerModule.setup('api', app, document);
+
+  logger.debug('Swagger documentation configured at /api');
+
+  const port = process.env.PORT ?? 3000;
+  await app.listen(port);
+
+  logger.log(`🚀 Application is running on: http://localhost:${port}`);
+  logger.log(`📚 API Documentation available at: http://localhost:${port}/api`);
 }
 bootstrap().catch((error) => {
-  console.error('Error starting the application:', error);
+  const logger = new Logger('Bootstrap');
+  logger.error(
+    'Error starting the application:',
+    error instanceof Error ? error.stack : String(error),
+  );
   process.exit(1);
 });

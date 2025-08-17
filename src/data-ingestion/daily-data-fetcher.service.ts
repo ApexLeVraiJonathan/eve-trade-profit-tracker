@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { MarketDataService } from './market-data.service';
-import { TrackedStationService } from './tracked-station.service';
+import { MarketDataImportService } from './market-data-import.service';
+import { TrackedStationService } from '../station-management/tracked-station.service';
 import { getErrorMessage } from '../common/interfaces/error.interface';
 import * as https from 'https';
 import * as fs from 'fs';
@@ -31,7 +31,7 @@ export class DailyDataFetcherService {
 
   constructor(
     private prisma: PrismaService,
-    private marketDataService: MarketDataService,
+    private marketDataImportService: MarketDataImportService,
     private trackedStationService: TrackedStationService,
   ) {}
 
@@ -270,7 +270,7 @@ export class DailyDataFetcherService {
 
     try {
       const stats =
-        await this.marketDataService.importMarketDataFromFile(localPath);
+        await this.marketDataImportService.importMarketDataFromFile(localPath);
       return { imported: stats.imported };
     } catch (error) {
       this.logger.error(
