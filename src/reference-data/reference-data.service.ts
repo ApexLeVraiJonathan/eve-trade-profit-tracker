@@ -252,44 +252,47 @@ export class ReferenceDataService {
     let updated = 0;
     let errors = 0;
 
-    // Process items in batches to avoid overwhelming ESI
-    const batchSize = 50;
-    for (let i = 0; i < itemsToUpdate.length; i += batchSize) {
-      const batch = itemsToUpdate.slice(i, i + batchSize);
-      this.logger.log(
-        `Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(itemsToUpdate.length / batchSize)}`,
-      );
+    // Process all items concurrently - let ESI service handle rate limiting
+    this.logger.log(
+      `Processing ${itemsToUpdate.length} items (ESI will handle rate limiting)`,
+    );
 
-      const batchPromises = batch.map(async (item) => {
-        try {
-          const typeInfoResponse = await this.esiService.getTypeInfo(item.id);
-
-          if (typeInfoResponse.success && typeInfoResponse.data) {
-            await this.prisma.itemType.update({
-              where: { id: item.id },
-              data: { volume: typeInfoResponse.data.volume },
-            });
-
-            updated++;
-            this.logger.debug(
-              `Updated volume for ${item.name}: ${typeInfoResponse.data.volume}`,
-            );
-          } else {
-            errors++;
-            this.logger.warn(
-              `Failed to get type info for ${item.name}: ${typeInfoResponse.error || 'Unknown error'}`,
-            );
-          }
-        } catch (error) {
-          errors++;
-          this.logger.warn(
-            `Failed to update volume for ${item.name}: ${getErrorMessage(error)}`,
+    const updatePromises = itemsToUpdate.map(async (item, index) => {
+      try {
+        // Log progress every 100 items
+        if (index % 100 === 0) {
+          this.logger.log(
+            `Progress: ${index + 1}/${itemsToUpdate.length} items`,
           );
         }
-      });
 
-      await Promise.allSettled(batchPromises);
-    }
+        const typeInfoResponse = await this.esiService.getTypeInfo(item.id);
+
+        if (typeInfoResponse.success && typeInfoResponse.data) {
+          await this.prisma.itemType.update({
+            where: { id: item.id },
+            data: { volume: typeInfoResponse.data.volume },
+          });
+
+          updated++;
+          this.logger.debug(
+            `Updated volume for ${item.name}: ${typeInfoResponse.data.volume}`,
+          );
+        } else {
+          errors++;
+          this.logger.warn(
+            `Failed to get type info for ${item.name}: ${typeInfoResponse.error || 'Unknown error'}`,
+          );
+        }
+      } catch (error) {
+        errors++;
+        this.logger.warn(
+          `Failed to update volume for ${item.name}: ${getErrorMessage(error)}`,
+        );
+      }
+    });
+
+    await Promise.allSettled(updatePromises);
 
     const endTime = new Date();
     const updateDuration = `${endTime.getTime() - startTime.getTime()}ms`;
@@ -323,43 +326,44 @@ export class ReferenceDataService {
     let updated = 0;
     let errors = 0;
 
-    // Process items in smaller batches for comprehensive update
-    const batchSize = 25;
-    for (let i = 0; i < allItems.length; i += batchSize) {
-      const batch = allItems.slice(i, i + batchSize);
-      this.logger.log(
-        `Processing volume batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(allItems.length / batchSize)}`,
-      );
+    // Process all items concurrently - let ESI service handle rate limiting
+    this.logger.log(
+      `Processing ${allItems.length} items for comprehensive volume update (ESI will handle rate limiting)`,
+    );
 
-      const batchPromises = batch.map(async (item) => {
-        try {
-          const typeInfoResponse = await this.esiService.getTypeInfo(item.id);
+    const updatePromises = allItems.map(async (item, index) => {
+      try {
+        // Log progress every 1000 items for large datasets
+        if (index % 1000 === 0) {
+          this.logger.log(`Progress: ${index + 1}/${allItems.length} items`);
+        }
 
-          if (typeInfoResponse.success && typeInfoResponse.data) {
-            // Only update if volume is different (upsert behavior)
-            if (item.volume !== typeInfoResponse.data.volume) {
-              await this.prisma.itemType.update({
-                where: { id: item.id },
-                data: { volume: typeInfoResponse.data.volume },
-              });
-              updated++;
-            }
-          } else {
-            errors++;
-            this.logger.warn(
-              `Failed to get type info for ${item.name}: ${typeInfoResponse.error || 'Unknown error'}`,
-            );
+        const typeInfoResponse = await this.esiService.getTypeInfo(item.id);
+
+        if (typeInfoResponse.success && typeInfoResponse.data) {
+          // Only update if volume is different (upsert behavior)
+          if (item.volume !== typeInfoResponse.data.volume) {
+            await this.prisma.itemType.update({
+              where: { id: item.id },
+              data: { volume: typeInfoResponse.data.volume },
+            });
+            updated++;
           }
-        } catch (error) {
+        } else {
           errors++;
           this.logger.warn(
-            `Failed to update volume for ${item.name}: ${getErrorMessage(error)}`,
+            `Failed to get type info for ${item.name}: ${typeInfoResponse.error || 'Unknown error'}`,
           );
         }
-      });
+      } catch (error) {
+        errors++;
+        this.logger.warn(
+          `Failed to update volume for ${item.name}: ${getErrorMessage(error)}`,
+        );
+      }
+    });
 
-      await Promise.allSettled(batchPromises);
-    }
+    await Promise.allSettled(updatePromises);
 
     const endTime = new Date();
     const updateDuration = `${endTime.getTime() - startTime.getTime()}ms`;

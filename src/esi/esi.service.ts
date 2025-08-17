@@ -27,7 +27,7 @@ export class EsiService {
     process.env.ESI_MAX_REQUESTS_PER_SECOND || '50',
   );
   private readonly userAgent =
-    process.env.ESI_USER_AGENT || 
+    process.env.ESI_USER_AGENT ||
     `EVE-Trade-Profit-Tracker/1.0.0 ${process.env.ESI_CONTACT_EMAIL || 'no-contact@example.com'}`;
   private readonly clientId = process.env.ESI_CLIENT_ID;
   // Note: clientSecret not needed for public endpoints, only for OAuth user authentication
@@ -66,10 +66,10 @@ export class EsiService {
 
     // Log authentication status
     const authStatus = this.clientId
-      ? 'with authentication (better rate limits)'
-      : 'without authentication (basic rate limits)';
+      ? 'with client_id (better visibility)'
+      : 'without client_id';
     this.logger.log(
-      `ESI Service initialized: ${this.maxRequestsPerSecond} req/sec, ${this.requestDelay}ms delay, ${authStatus}`,
+      `ESI Service initialized: ${this.maxRequestsPerSecond} req/sec (ESI uses error-based throttling), ${this.requestDelay}ms delay, ${authStatus}`,
     );
 
     // Start processing queue (background process)
@@ -166,14 +166,14 @@ export class EsiService {
             `ESI error limit low: ${errorLimitInfo.remaining}/${errorLimitInfo.limit} remaining - slow down requests!`,
           );
         }
-        
+
         // If very low, we should pause requests
         if (errorLimitInfo.remaining < 10) {
           this.logger.error(
             `ESI error limit critically low: ${errorLimitInfo.remaining}/${errorLimitInfo.limit} remaining - pausing requests!`,
           );
           // Add a delay to prevent hitting the error limit
-          await new Promise(resolve => setTimeout(resolve, 5000));
+          await new Promise((resolve) => setTimeout(resolve, 5000));
         }
       }
 
@@ -885,6 +885,10 @@ export class EsiService {
       rateLimitRemaining: this.currentRateLimit.remaining,
       rateLimitReset: this.currentRateLimit.reset,
       rateLimitLimit: this.currentRateLimit.limit,
+      // Error limit info (more important for ESI)
+      errorLimitRemaining: this.errorLimitInfo.remaining,
+      errorLimitReset: this.errorLimitInfo.reset,
+      errorLimitLimit: this.errorLimitInfo.limit,
       lastSuccessfulCall: this.lastSuccessfulCall?.toISOString(),
       totalCalls: this.totalCalls,
       errors: this.errors,

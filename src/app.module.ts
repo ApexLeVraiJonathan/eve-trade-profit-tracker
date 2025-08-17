@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, Controller, Get } from '@nestjs/common';
 import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReferenceDataModule } from './reference-data/reference-data.module';
@@ -8,6 +8,29 @@ import { DataIngestionModule } from './data-ingestion/data-ingestion.module';
 import { EsiModule } from './esi/esi.module';
 import { ArbitrageModule } from './arbitrage/arbitrage.module';
 import { CycleManagementModule } from './cycle-management/cycle-management.module';
+
+@Controller()
+export class HealthController {
+  @Get()
+  getHealth() {
+    return {
+      status: 'ok',
+      timestamp: new Date().toISOString(),
+      service: 'EVE Trade Profit Tracker',
+      version: '1.0.0',
+    };
+  }
+
+  @Get('health')
+  getHealthCheck() {
+    return {
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+    };
+  }
+}
 
 @Module({
   imports: [
@@ -21,7 +44,7 @@ import { CycleManagementModule } from './cycle-management/cycle-management.modul
     ArbitrageModule,
     CycleManagementModule,
   ],
-  controllers: [],
+  controllers: [HealthController],
   providers: [],
 })
 export class AppModule {}

@@ -6,11 +6,14 @@
 # Database connection
 DATABASE_URL="postgresql://username:password@localhost:5432/eve_trade_tracker"
 
-# ESI API Configuration
+# ESI API Configuration (Updated for ESI Best Practices)
 # ESI_CLIENT_ID="your_esi_client_id_here"  # Optional - only needed for authenticated endpoints
 ESI_USER_AGENT="EVE-Trade-Profit-Tracker/1.0.0 your-email@example.com +https://github.com/your/repo"
-ESI_MAX_REQUESTS_PER_SECOND="50"  # 500 requests per 10 seconds = 50/sec
-ESI_CONTACT_EMAIL="your-email@example.com"
+ESI_MAX_REQUESTS_PER_SECOND="50"  # ESI uses error-based throttling, not rate limits
+ESI_CONTACT_EMAIL="your-email@example.com"  # Contact for CCP if issues arise
+
+# Important: ESI monitors error rates (100 errors per 60 seconds), not request rates
+# Your User-Agent MUST include contact information for CCP to reach you if needed
 ```
 
 ## 📝 **Logging Configuration**
