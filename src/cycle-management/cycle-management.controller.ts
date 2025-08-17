@@ -8,11 +8,13 @@ import {
   Patch,
   Delete,
 } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { CycleManagementService } from './cycle-management.service';
 import { ArbitrageService } from '../arbitrage/arbitrage.service';
 import { CreateCycleDto, CycleFiltersDto } from './dto/cycle.dto';
 import { CycleOpportunitiesResponse } from './interfaces/cycle.interface';
 
+@ApiTags('cycle')
 @Controller('cycle')
 export class CycleManagementController {
   constructor(

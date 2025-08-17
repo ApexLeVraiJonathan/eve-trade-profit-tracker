@@ -1,4 +1,5 @@
 import { Controller, Get, Post, Param, Logger } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { EsiService } from './esi.service';
 import {
   EsiStatusDto,
@@ -7,6 +8,7 @@ import {
   EsiErrorDto,
 } from './dto/esi.dto';
 
+@ApiTags('esi')
 @Controller('esi')
 export class EsiController {
   private readonly logger = new Logger(EsiController.name);

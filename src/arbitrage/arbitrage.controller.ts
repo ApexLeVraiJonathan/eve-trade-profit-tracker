@@ -1,4 +1,5 @@
 import { Controller, Get, Query, Logger } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { ArbitrageService } from './arbitrage.service';
 import { ArbitrageOpportunity } from './interfaces/arbitrage.interface';
 import {
@@ -18,6 +19,7 @@ import {
   isValidSortOrder,
 } from './interfaces/query.interface';
 
+@ApiTags('arbitrage')
 @Controller('arbitrage')
 export class ArbitrageController {
   private readonly logger = new Logger(ArbitrageController.name);

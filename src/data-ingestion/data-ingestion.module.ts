@@ -4,7 +4,6 @@ import { StationManagementModule } from '../station-management/station-managemen
 import { MarketDataImportService } from './market-data-import.service';
 import { DailyDataFetcherService } from './daily-data-fetcher.service';
 import { DailyDataSchedulerService } from './daily-data-scheduler.service';
-import { MarketDataImportController } from './market-data-import.controller';
 import { DailyDataFetcherController } from './daily-data-fetcher.controller';
 import { DailyDataSchedulerController } from './daily-data-scheduler.controller';
 
@@ -13,11 +12,7 @@ import { DailyDataSchedulerController } from './daily-data-scheduler.controller'
     PrismaModule,
     StationManagementModule, // Need TrackedStationService
   ],
-  controllers: [
-    MarketDataImportController,
-    DailyDataFetcherController,
-    DailyDataSchedulerController,
-  ],
+  controllers: [DailyDataFetcherController, DailyDataSchedulerController],
   providers: [
     MarketDataImportService,
     DailyDataFetcherService,

@@ -65,11 +65,13 @@ async function bootstrap() {
     )
     .setVersion('1.0')
     .addTag('reference-data', 'EVE reference data management')
-    .addTag('market-data', 'Market data and daily imports')
+    .addTag('daily-data', 'Daily market data fetching from Adam4EVE')
     .addTag('tracked-stations', 'Station tracking configuration')
+    .addTag('market-analytics', 'Market data analysis and liquidity')
     .addTag('arbitrage', 'Arbitrage opportunities and calculations')
     .addTag('esi', 'EVE Swagger Interface integration')
     .addTag('scheduler', 'Automated data collection scheduling')
+    .addTag('cycle', 'Cycle management for trading operations')
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

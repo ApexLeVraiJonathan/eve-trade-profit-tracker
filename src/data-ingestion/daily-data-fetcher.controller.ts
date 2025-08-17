@@ -1,4 +1,5 @@
 import { Controller, Post, Get } from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
 import { DailyDataFetcherService } from './daily-data-fetcher.service';
 import { ErrorResponseDto } from '../common/dto/common-response.dto';
 import { getErrorMessage } from '../common/interfaces/error.interface';
@@ -27,6 +28,7 @@ export interface AvailableFilesDto {
   };
 }
 
+@ApiTags('daily-data')
 @Controller('daily-data')
 export class DailyDataFetcherController {
   constructor(
