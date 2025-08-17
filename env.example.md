@@ -5,6 +5,12 @@
 ```bash
 # Database connection
 DATABASE_URL="postgresql://username:password@localhost:5432/eve_trade_tracker"
+
+# ESI API Configuration
+# ESI_CLIENT_ID="your_esi_client_id_here"  # Optional - only needed for authenticated endpoints
+ESI_USER_AGENT="EVE-Trade-Profit-Tracker/1.0.0 your-email@example.com +https://github.com/your/repo"
+ESI_MAX_REQUESTS_PER_SECOND="50"  # 500 requests per 10 seconds = 50/sec
+ESI_CONTACT_EMAIL="your-email@example.com"
 ```
 
 ## 📝 **Logging Configuration**

@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Put, Logger } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { DailyDataSchedulerService } from './daily-data-scheduler.service';
-import { ErrorResponseDto } from '../reference-data/dto/reference-data.dto';
+import { ErrorResponseDto } from '../common/dto/common-response.dto';
 import { getErrorMessage } from '../common/interfaces/error.interface';
 
 export interface SchedulerStatusDto {

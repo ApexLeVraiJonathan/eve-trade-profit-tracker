@@ -2,7 +2,7 @@ import { Controller, Post, Body, Logger } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { MarketDataImportService } from './market-data-import.service';
 import { MarketDataImportResultDto } from '../common/dto/market-data.dto';
-import { ErrorResponseDto } from '../reference-data/dto/reference-data.dto';
+import { ErrorResponseDto } from '../common/dto/common-response.dto';
 import { getErrorMessage } from '../common/interfaces/error.interface';
 import * as path from 'path';
 import * as fs from 'fs';

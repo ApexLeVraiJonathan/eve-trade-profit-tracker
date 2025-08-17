@@ -7,6 +7,7 @@ import {
   EsiTypeInfo,
   EsiApiResponse,
   EsiRateLimitInfo,
+  EsiErrorLimitInfo,
   EsiMarketPrice,
 } from './interfaces/esi.interface';
 
@@ -23,10 +24,13 @@ export class EsiService {
 
   // Configuration from environment variables
   private readonly maxRequestsPerSecond = parseInt(
-    process.env.ESI_MAX_REQUESTS_PER_SECOND || '100',
+    process.env.ESI_MAX_REQUESTS_PER_SECOND || '50',
   );
   private readonly userAgent =
-    process.env.ESI_USER_AGENT || 'EVE-Trade-Profit-Tracker/1.0.0';
+    process.env.ESI_USER_AGENT || 
+    `EVE-Trade-Profit-Tracker/1.0.0 ${process.env.ESI_CONTACT_EMAIL || 'no-contact@example.com'}`;
+  private readonly clientId = process.env.ESI_CLIENT_ID;
+  // Note: clientSecret not needed for public endpoints, only for OAuth user authentication
 
   // Centralized rate limiting and queue management
   private requestQueue: QueuedRequest<any>[] = [];
@@ -38,6 +42,13 @@ export class EsiService {
     remaining: this.maxRequestsPerSecond,
     reset: Date.now() + 60000,
     limit: this.maxRequestsPerSecond,
+  };
+
+  // ESI error limit tracking (more important than rate limits)
+  private errorLimitInfo = {
+    remaining: 100, // ESI allows 100 errors per 60 seconds
+    reset: Date.now() + 60000,
+    limit: 100,
   };
 
   // Statistics
@@ -53,8 +64,12 @@ export class EsiService {
     // Calculate delay based on desired requests per second
     this.requestDelay = Math.ceil(1000 / this.maxRequestsPerSecond);
 
+    // Log authentication status
+    const authStatus = this.clientId
+      ? 'with authentication (better rate limits)'
+      : 'without authentication (basic rate limits)';
     this.logger.log(
-      `ESI Service initialized: ${this.maxRequestsPerSecond} req/sec, ${this.requestDelay}ms delay`,
+      `ESI Service initialized: ${this.maxRequestsPerSecond} req/sec, ${this.requestDelay}ms delay, ${authStatus}`,
     );
 
     // Start processing queue (background process)
@@ -62,10 +77,24 @@ export class EsiService {
   }
 
   /**
-   * Smart rate limiting based on ESI headers
+   * Add authentication parameters to ESI URLs when available
    */
-  // No-op placeholder; queue pacing handles delays. Kept for future tuning.
-  // Remove unused method to satisfy noUnusedLocals
+  private addAuthToUrl(url: string): string {
+    if (!this.clientId) {
+      return url;
+    }
+
+    try {
+      const urlObj = new URL(url);
+      urlObj.searchParams.set('client_id', this.clientId);
+      return urlObj.toString();
+    } catch (error) {
+      this.logger.warn(
+        `Failed to add auth to URL ${url}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return url;
+    }
+  }
 
   /**
    * Process the request queue with rate limiting
@@ -100,8 +129,11 @@ export class EsiService {
     this.totalCalls++;
 
     try {
+      // Add client_id to URL if available for better rate limits
+      const url = this.addAuthToUrl(request.url);
+
       const response = await firstValueFrom(
-        this.httpService.get(request.url, {
+        this.httpService.get(url, {
           headers: {
             'User-Agent': this.userAgent,
           },
@@ -120,6 +152,28 @@ export class EsiService {
           this.logger.warn(
             `ESI rate limit low: ${rateLimitInfo.remaining}/${rateLimitInfo.limit} remaining`,
           );
+        }
+      }
+
+      // Update error limit info (more important for ESI)
+      const errorLimitInfo = this.extractErrorLimitInfo(response.headers);
+      if (errorLimitInfo) {
+        this.errorLimitInfo = errorLimitInfo;
+
+        // Log warnings if error limit is getting low (this is critical!)
+        if (errorLimitInfo.remaining < 20) {
+          this.logger.warn(
+            `ESI error limit low: ${errorLimitInfo.remaining}/${errorLimitInfo.limit} remaining - slow down requests!`,
+          );
+        }
+        
+        // If very low, we should pause requests
+        if (errorLimitInfo.remaining < 10) {
+          this.logger.error(
+            `ESI error limit critically low: ${errorLimitInfo.remaining}/${errorLimitInfo.limit} remaining - pausing requests!`,
+          );
+          // Add a delay to prevent hitting the error limit
+          await new Promise(resolve => setTimeout(resolve, 5000));
         }
       }
 
@@ -244,6 +298,29 @@ export class EsiService {
         remaining: parseInt(remaining),
         reset: Date.now() + parseInt(reset) * 1000, // Convert seconds to ms timestamp
         limit: parseInt(limit),
+      };
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Extract error limit information from response headers (more important for ESI)
+   */
+  private extractErrorLimitInfo(headers: any): EsiErrorLimitInfo | undefined {
+    // Safely extract error limit headers
+    const remaining = (headers as Record<string, string | undefined>)[
+      'x-esi-error-limit-remain'
+    ];
+    const reset = (headers as Record<string, string | undefined>)[
+      'x-esi-error-limit-reset'
+    ];
+
+    if (remaining && reset) {
+      return {
+        remaining: parseInt(remaining),
+        reset: Date.now() + parseInt(reset) * 1000, // Convert seconds to ms timestamp
+        limit: 100, // ESI allows 100 errors per 60 seconds
       };
     }
 

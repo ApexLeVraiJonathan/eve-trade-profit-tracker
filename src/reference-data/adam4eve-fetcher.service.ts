@@ -56,7 +56,7 @@ export class Adam4EveFetcherService {
   }
 
   async fetchFreshReferenceData(
-    downloadDir: string = 'temp_adam4eve',
+    downloadDir: string = 'temp',
   ): Promise<FetchResult> {
     this.logger.log('Starting fresh reference data fetch from Adam4EVE');
 
@@ -133,18 +133,10 @@ export class Adam4EveFetcherService {
       }
     }
 
-    // Try to remove temp directory if empty
-    try {
-      const tempDir = path.dirname(filePaths[0]);
-      if (fs.existsSync(tempDir) && fs.readdirSync(tempDir).length === 0) {
-        fs.rmdirSync(tempDir);
-        this.logger.log(`Cleaned up temp directory: ${tempDir}`);
-      }
-    } catch (error) {
-      this.logger.warn(
-        `Failed to cleanup temp directory: ${getErrorMessage(error)}`,
-      );
-    }
+    // Note: We don't remove the temp/ directory since it's shared across modules
+    this.logger.log(
+      'Cleanup completed (temp directory preserved for shared use)',
+    );
   }
 
   async checkAdam4EveAvailability(): Promise<FileAvailability> {
@@ -196,6 +188,86 @@ export class Adam4EveFetcherService {
     };
   }
 
+  async fetchIndividualReferenceData(
+    dataType: 'regions' | 'solarSystems' | 'stations' | 'itemTypes',
+  ): Promise<{ recordsImported: number; updateDuration: string }> {
+    const startTime = new Date();
+    this.logger.log(`Starting individual ${dataType} data fetch from Adam4EVE`);
+
+    const fileMap = {
+      regions: 'region_ids.csv',
+      solarSystems: 'solarSystem_ids.csv',
+      stations: 'npcStation_ids.csv',
+      itemTypes: 'type_ids.csv',
+    };
+
+    const fileName = fileMap[dataType];
+    const tempDir = path.resolve('temp');
+
+    // Create temp directory
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+
+    const url = `${this.baseUrl}/${fileName}`;
+    const filePath = path.join(tempDir, fileName);
+
+    try {
+      // Download the file
+      this.logger.log(`Downloading ${fileName} from ${url}`);
+      await this.downloadFile(url, filePath);
+      this.logger.log(`Downloaded ${fileName} successfully`);
+
+      // Import the data
+      let recordsImported: number;
+      switch (dataType) {
+        case 'regions':
+          recordsImported =
+            await this.referenceDataService.importRegions(filePath);
+          break;
+        case 'solarSystems':
+          recordsImported =
+            await this.referenceDataService.importSolarSystems(filePath);
+          break;
+        case 'stations':
+          recordsImported =
+            await this.referenceDataService.importStations(filePath);
+          break;
+        case 'itemTypes':
+          recordsImported =
+            await this.referenceDataService.importItemTypes(filePath);
+          break;
+      }
+
+      const endTime = new Date();
+      const updateDuration = `${endTime.getTime() - startTime.getTime()}ms`;
+
+      this.logger.log(
+        `Successfully updated ${dataType}: ${recordsImported} records in ${updateDuration}`,
+      );
+
+      return { recordsImported, updateDuration };
+    } catch (error) {
+      this.logger.error(
+        `Individual ${dataType} fetch failed: ${getErrorMessage(error)}`,
+      );
+      throw error;
+    } finally {
+      // Cleanup temp files
+      try {
+        if (fs.existsSync(filePath)) {
+          fs.unlinkSync(filePath);
+          this.logger.log(`Cleaned up temp file: ${filePath}`);
+        }
+        // Note: We don't remove the temp/ directory since it's shared across modules
+      } catch (error) {
+        this.logger.warn(
+          `Failed to cleanup temp file ${filePath}: ${getErrorMessage(error)}`,
+        );
+      }
+    }
+  }
+
   async bootstrapReferenceData(): Promise<BootstrapResult> {
     this.logger.log('Starting reference data bootstrap');
 
@@ -220,23 +292,9 @@ export class Adam4EveFetcherService {
       };
     } catch (error) {
       this.logger.warn(`Fresh data fetch failed: ${getErrorMessage(error)}`);
-      this.logger.log('Falling back to local files...');
-
-      // Fallback to local files
-      try {
-        await this.referenceDataService.importAllReferenceData('doc');
-        return {
-          method: 'local',
-          message: 'Successfully bootstrapped with local backup files',
-        };
-      } catch (localError) {
-        this.logger.error(
-          `Local fallback failed: ${getErrorMessage(localError)}`,
-        );
-        throw new Error(
-          `Bootstrap failed: Fresh data unavailable and local fallback failed`,
-        );
-      }
+      throw new Error(
+        `Bootstrap failed: Fresh data unavailable. Please check Adam4EVE availability.`,
+      );
     }
   }
 }

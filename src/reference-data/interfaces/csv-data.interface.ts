@@ -49,3 +49,11 @@ export interface FileAvailability {
   available: boolean;
   files: { name: string; available: boolean; lastModified?: string }[];
 }
+
+// Volume update result interface
+export interface VolumeUpdateResult {
+  totalProcessed: number;
+  updated: number;
+  errors: number;
+  updateDuration: string;
+}

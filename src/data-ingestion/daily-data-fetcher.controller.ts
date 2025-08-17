@@ -1,6 +1,6 @@
 import { Controller, Post, Get } from '@nestjs/common';
 import { DailyDataFetcherService } from './daily-data-fetcher.service';
-import { ErrorResponseDto } from '../reference-data/dto/reference-data.dto';
+import { ErrorResponseDto } from '../common/dto/common-response.dto';
 import { getErrorMessage } from '../common/interfaces/error.interface';
 
 export interface DailyFetchResponseDto {

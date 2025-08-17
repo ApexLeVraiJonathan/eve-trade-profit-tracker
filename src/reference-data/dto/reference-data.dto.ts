@@ -57,7 +57,24 @@ export interface FileAvailabilityDto {
   lastModified?: string;
 }
 
-export interface ErrorResponseDto {
-  success: false;
+export interface IndividualUpdateResultDto {
+  success: boolean;
   message: string;
+  data: {
+    dataType: 'regions' | 'solarSystems' | 'stations' | 'itemTypes';
+    recordsProcessed: number;
+    recordsImported: number;
+    updateDuration: string;
+  };
+}
+
+export interface VolumeUpdateResultDto {
+  success: boolean;
+  message: string;
+  data: {
+    totalProcessed: number;
+    updated: number;
+    errors: number;
+    updateDuration: string;
+  };
 }

@@ -20,7 +20,7 @@ import {
   MarketDataQueryResultDto,
   MarketDataStatsDto,
 } from '../common/dto/market-data.dto';
-import { ErrorResponseDto } from '../reference-data/dto/reference-data.dto';
+import { ErrorResponseDto } from '../common/dto/common-response.dto';
 import { getErrorMessage } from '../common/interfaces/error.interface';
 
 @ApiTags('market-analytics')

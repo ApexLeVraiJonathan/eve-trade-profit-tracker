@@ -46,6 +46,12 @@ export interface EsiRateLimitInfo {
   limit: number;
 }
 
+export interface EsiErrorLimitInfo {
+  remaining: number;
+  reset: number;
+  limit: number;
+}
+
 // Generic ESI API response wrapper (unified interface)
 export interface EsiApiResponse<T = unknown> {
   success: boolean;

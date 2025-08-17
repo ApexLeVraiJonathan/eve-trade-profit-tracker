@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { EsiService } from '../esi/esi.service';
 import * as fs from 'fs';
 import * as path from 'path';
 import { parse } from 'csv-parse/sync';
@@ -9,6 +10,7 @@ import {
   StationCsvRow,
   ItemTypeCsvRow,
   ImportStats,
+  VolumeUpdateResult,
 } from './interfaces/csv-data.interface';
 import { getErrorMessage } from '../common/interfaces/error.interface';
 
@@ -16,7 +18,10 @@ import { getErrorMessage } from '../common/interfaces/error.interface';
 export class ReferenceDataService {
   private readonly logger = new Logger(ReferenceDataService.name);
 
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private esiService: EsiService,
+  ) {}
 
   async importRegions(filePath: string): Promise<number> {
     this.logger.log(`Importing regions from ${filePath}`);
@@ -180,7 +185,7 @@ export class ReferenceDataService {
     return imported;
   }
 
-  async importAllReferenceData(dataDir: string = 'doc'): Promise<void> {
+  async importAllReferenceData(dataDir: string): Promise<void> {
     this.logger.log('Starting full reference data import');
 
     const basePath = path.resolve(dataDir);
@@ -215,5 +220,159 @@ export class ReferenceDataService {
   async isReferenceDataEmpty(): Promise<boolean> {
     const stats = await this.getReferenceDataStats();
     return Object.values(stats).every((count) => count === 0);
+  }
+
+  /**
+   * Update item volumes from ESI
+   */
+  async updateItemVolumes(): Promise<VolumeUpdateResult> {
+    const startTime = new Date();
+    this.logger.log('Starting item volume update from ESI...');
+
+    // Get all item types that need volume updates (volume is null)
+    const itemsToUpdate = await this.prisma.itemType.findMany({
+      where: { volume: null },
+      select: { id: true, name: true },
+    });
+
+    this.logger.log(
+      `Found ${itemsToUpdate.length} items that need volume updates`,
+    );
+
+    if (itemsToUpdate.length === 0) {
+      const endTime = new Date();
+      return {
+        totalProcessed: 0,
+        updated: 0,
+        errors: 0,
+        updateDuration: `${endTime.getTime() - startTime.getTime()}ms`,
+      };
+    }
+
+    let updated = 0;
+    let errors = 0;
+
+    // Process items in batches to avoid overwhelming ESI
+    const batchSize = 50;
+    for (let i = 0; i < itemsToUpdate.length; i += batchSize) {
+      const batch = itemsToUpdate.slice(i, i + batchSize);
+      this.logger.log(
+        `Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(itemsToUpdate.length / batchSize)}`,
+      );
+
+      const batchPromises = batch.map(async (item) => {
+        try {
+          const typeInfoResponse = await this.esiService.getTypeInfo(item.id);
+
+          if (typeInfoResponse.success && typeInfoResponse.data) {
+            await this.prisma.itemType.update({
+              where: { id: item.id },
+              data: { volume: typeInfoResponse.data.volume },
+            });
+
+            updated++;
+            this.logger.debug(
+              `Updated volume for ${item.name}: ${typeInfoResponse.data.volume}`,
+            );
+          } else {
+            errors++;
+            this.logger.warn(
+              `Failed to get type info for ${item.name}: ${typeInfoResponse.error || 'Unknown error'}`,
+            );
+          }
+        } catch (error) {
+          errors++;
+          this.logger.warn(
+            `Failed to update volume for ${item.name}: ${getErrorMessage(error)}`,
+          );
+        }
+      });
+
+      await Promise.allSettled(batchPromises);
+    }
+
+    const endTime = new Date();
+    const updateDuration = `${endTime.getTime() - startTime.getTime()}ms`;
+
+    this.logger.log(
+      `Volume update completed: ${updated} updated, ${errors} errors in ${updateDuration}`,
+    );
+
+    return {
+      totalProcessed: itemsToUpdate.length,
+      updated,
+      errors,
+      updateDuration,
+    };
+  }
+
+  /**
+   * Update volumes for all item types during seeding
+   */
+  async updateAllItemVolumes(): Promise<VolumeUpdateResult> {
+    const startTime = new Date();
+    this.logger.log('Starting comprehensive item volume update from ESI...');
+
+    // Get all item types (for seeding)
+    const allItems = await this.prisma.itemType.findMany({
+      select: { id: true, name: true, volume: true },
+    });
+
+    this.logger.log(`Found ${allItems.length} total item types`);
+
+    let updated = 0;
+    let errors = 0;
+
+    // Process items in smaller batches for comprehensive update
+    const batchSize = 25;
+    for (let i = 0; i < allItems.length; i += batchSize) {
+      const batch = allItems.slice(i, i + batchSize);
+      this.logger.log(
+        `Processing volume batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(allItems.length / batchSize)}`,
+      );
+
+      const batchPromises = batch.map(async (item) => {
+        try {
+          const typeInfoResponse = await this.esiService.getTypeInfo(item.id);
+
+          if (typeInfoResponse.success && typeInfoResponse.data) {
+            // Only update if volume is different (upsert behavior)
+            if (item.volume !== typeInfoResponse.data.volume) {
+              await this.prisma.itemType.update({
+                where: { id: item.id },
+                data: { volume: typeInfoResponse.data.volume },
+              });
+              updated++;
+            }
+          } else {
+            errors++;
+            this.logger.warn(
+              `Failed to get type info for ${item.name}: ${typeInfoResponse.error || 'Unknown error'}`,
+            );
+          }
+        } catch (error) {
+          errors++;
+          this.logger.warn(
+            `Failed to update volume for ${item.name}: ${getErrorMessage(error)}`,
+          );
+        }
+      });
+
+      await Promise.allSettled(batchPromises);
+    }
+
+    const endTime = new Date();
+    const updateDuration = `${endTime.getTime() - startTime.getTime()}ms`;
+
+    this.logger.log(
+      `Comprehensive volume update completed: ${updated} updated, ${errors} errors in ${updateDuration}`,
+    );
+
+    return {
+      totalProcessed: allItems.length,
+      updated,
+      errors,
+      updateDuration,
+    };
   }
 }
